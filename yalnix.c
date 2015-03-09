@@ -13,6 +13,7 @@ void TrapTtyTransmit(ExceptionStackFrame *frame);
 
 void * vector_table[7];
 struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
+struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
 
 
 typedef struct FreePage FreePage;
@@ -136,42 +137,63 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     // Step 3: Build page tables for Region 1 and Region 0
-    struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
+    
     
     //build R1 page table
     void * physicalPageAddress = (void *) DOWN_TO_PAGE(VMEM_1_BASE);
     int i;
     // TODO: do we need to round etext to the page?
-    for (i = 0; i < (long) &_etext / PAGESIZE; i++) {
+    TracePrintf(1, "etext page = %d\n", (long)&_etext / PAGESIZE);
+    TracePrintf(1, "End of heap page = %d\n", (long) orig_brk / PAGESIZE);
+    
+    //Add PTEs for Kernel text
+    for (i = 0; i < (long) UP_TO_PAGE(&_etext) / PAGESIZE; i++) {
+        TracePrintf(1, "i = %d, pfn = %d\n", i, (long) physicalPageAddress / PAGESIZE);
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
+        region1PageTable[i].valid = 1;
         physicalPageAddress += PAGESIZE;
     }
     
-    for (i = (long) physicalPageAddress / PAGESIZE; i < (long) orig_brk / PAGESIZE; i++) {
+    TracePrintf(1, "Stopping condition is: %d\n", (long) orig_brk / PAGESIZE);
+    TracePrintf(1, "PROT_READ | PROT_WRITE = %d\n", PROT_READ | PROT_WRITE);
+    //Add PTEs for kernel data/bss/heap
+    for (; i < (long) orig_brk / PAGESIZE; i++) {
+        TracePrintf(1, "Second for loop i = %d\n", i);
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
+        region1PageTable[i].valid = 1;
         physicalPageAddress += PAGESIZE;
     }
     
-    for (i = (long) physicalPageAddress / PAGESIZE; i < VMEM_1_LIMIT / PAGESIZE; i++) {
+    
+    
+    //Add invalid PTEs for the rest of memory in R1
+    for (; i < VMEM_1_LIMIT / PAGESIZE; i++) {
+        TracePrintf(1, "Third for loop i = %d\n", i);
         region1PageTable[i].valid = 0;
         physicalPageAddress += PAGESIZE;
     }
+    
+    
     
     //build R0 page table
     physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
     for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        region1PageTable[i].valid = 0;
+        TracePrintf(2, "i = %d\n", i);
+        region0PageTable[i].valid = 0;
         physicalPageAddress += PAGESIZE;
     }
 
     for (i = (long) physicalPageAddress / PAGESIZE; i < VMEM_0_LIMIT / PAGESIZE; i++) {
+        TracePrintf(2, "Second for loop i = %d\n", i);
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
-        region1PageTable[i].uprot = 0;
-        region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
+        TracePrintf(2, "pfn for index %d = %d\n", i, region1PageTable[i].pfn);
+        region0PageTable[i].uprot = 0;
+        region0PageTable[i].kprot = PROT_READ | PROT_WRITE;
+        region0PageTable[i].valid = 1;
         physicalPageAddress += PAGESIZE;
     }
     
@@ -180,6 +202,14 @@ KernelStart(ExceptionStackFrame *frame,
     WriteRegister(REG_PTR1, (RCS421RegVal) &region1PageTable);
     
     // Step 4: Switch on virtual memory
+    //PAGE TABLE SANITY CHECK
+    region1PageTable[523].kprot = 3;
+    region1PageTable[524].kprot = 3;
+    region1PageTable[525].kprot = 3;
+    int j;
+    for (j=0; j < VMEM_1_LIMIT / PAGESIZE; j++) {
+        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+    }
     WriteRegister(REG_VM_ENABLE, 1);
     
     // Step 5: ?
