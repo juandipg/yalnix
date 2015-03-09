@@ -8,8 +8,6 @@ void TrapMemory(ExceptionStackFrame *frame);
 void TrapMath(ExceptionStackFrame *frame);
 void TrapTtyReceive(ExceptionStackFrame *frame);
 void TrapTtyTransmit(ExceptionStackFrame *frame);
-void KernelStart(ExceptionStackFrame *frame,
-        unsigned int pmem_size, void *orig_brk, char **cmd_args);
 
 void * vector_table[7];
 
