@@ -112,17 +112,9 @@ KernelStart(ExceptionStackFrame *frame,
             page < (FreePage *) KERNEL_STACK_BASE; 
             page += PAGESIZE) 
     {
-        TracePrintf(1, "Adding address %p to list\n", page);
         page->next = firstFreePage;
         firstFreePage = page;
     }
-    
-    TracePrintf(1, "Got through region 0\n");
-    TracePrintf(1, "Kernel stack base is at %p\n", (void *) KERNEL_STACK_BASE);
-    TracePrintf(1, "We have %d bytes of physical memory\n", pmem_size);
-    TracePrintf(1, "Size of void * is: %d\n", sizeof(void *));
-    TracePrintf(1, "Size of FreePage * is: %d\n", sizeof(FreePage *));
-    TracePrintf(1, "memory ends at %p\n", ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *));
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
@@ -131,7 +123,6 @@ KernelStart(ExceptionStackFrame *frame,
             page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *); 
             page += PAGESIZE) 
     {
-        TracePrintf(1, "Adding address %p to list\n", page);
         page->next = firstFreePage;
         firstFreePage = page;
     }
@@ -141,13 +132,10 @@ KernelStart(ExceptionStackFrame *frame,
     
     //build R1 page table
     void * physicalPageAddress = (void *) DOWN_TO_PAGE(VMEM_1_BASE);
-    int i;
-    // TODO: do we need to round etext to the page?
-    TracePrintf(1, "etext page = %d\n", (long)&_etext / PAGESIZE);
-    TracePrintf(1, "End of heap page = %d\n", (long) orig_brk / PAGESIZE);
     
     //Add PTEs for Kernel text
-    for (i = 0; i < (long) UP_TO_PAGE(&_etext) / PAGESIZE; i++) {
+    int i;
+    for (i = 0; i < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; i++) {
         TracePrintf(1, "i = %d, pfn = %d\n", i, (long) physicalPageAddress / PAGESIZE);
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region1PageTable[i].uprot = 0;
@@ -156,11 +144,8 @@ KernelStart(ExceptionStackFrame *frame,
         physicalPageAddress += PAGESIZE;
     }
     
-    TracePrintf(1, "Stopping condition is: %d\n", (long) orig_brk / PAGESIZE);
-    TracePrintf(1, "PROT_READ | PROT_WRITE = %d\n", PROT_READ | PROT_WRITE);
     //Add PTEs for kernel data/bss/heap
-    for (; i < (long) orig_brk / PAGESIZE; i++) {
-        TracePrintf(1, "Second for loop i = %d\n", i);
+    for (; i < (long) (orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
@@ -168,29 +153,21 @@ KernelStart(ExceptionStackFrame *frame,
         physicalPageAddress += PAGESIZE;
     }
     
-    
-    
     //Add invalid PTEs for the rest of memory in R1
-    for (; i < VMEM_1_LIMIT / PAGESIZE; i++) {
-        TracePrintf(1, "Third for loop i = %d\n", i);
+    for (; i < VMEM_1_SIZE / PAGESIZE; i++) {
         region1PageTable[i].valid = 0;
         physicalPageAddress += PAGESIZE;
     }
     
-    
-    
     //build R0 page table
     physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
     for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        TracePrintf(2, "i = %d\n", i);
         region0PageTable[i].valid = 0;
         physicalPageAddress += PAGESIZE;
     }
 
-    for (i = (long) physicalPageAddress / PAGESIZE; i < VMEM_0_LIMIT / PAGESIZE; i++) {
-        TracePrintf(2, "Second for loop i = %d\n", i);
-        region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
-        TracePrintf(2, "pfn for index %d = %d\n", i, region1PageTable[i].pfn);
+    for (; i < VMEM_0_LIMIT / PAGESIZE; i++) {
+        region0PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region0PageTable[i].uprot = 0;
         region0PageTable[i].kprot = PROT_READ | PROT_WRITE;
         region0PageTable[i].valid = 1;
@@ -203,13 +180,11 @@ KernelStart(ExceptionStackFrame *frame,
     
     // Step 4: Switch on virtual memory
     //PAGE TABLE SANITY CHECK
-    region1PageTable[523].kprot = 3;
-    region1PageTable[524].kprot = 3;
-    region1PageTable[525].kprot = 3;
     int j;
-    for (j=0; j < VMEM_1_LIMIT / PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+    for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) {
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
     }
+    TracePrintf(10, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
     WriteRegister(REG_VM_ENABLE, 1);
     
     // Step 5: ?
