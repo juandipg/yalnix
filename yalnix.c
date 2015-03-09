@@ -12,6 +12,8 @@ void TrapTtyReceive(ExceptionStackFrame *frame);
 void TrapTtyTransmit(ExceptionStackFrame *frame);
 
 void * vector_table[7];
+pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
+
 
 typedef struct FreePage FreePage;
 
@@ -134,8 +136,50 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     // Step 3: Build page tables for Region 1 and Region 0
+    pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
+    
+    
+    //build R1 page table
+    void * physicalPageAddress = DOWN_TO_PAGE(VMEM_1_BASE);
+    for (i=0; i < &_etext / PAGESIZE; i++) {
+        region1PageTable[i]->pfn = physicalPageAddress / PAGESIZE;
+        region1PageTable[i]->uprot = 0;
+        region1PageTable[i]->kprot = PROT_READ | PROT_EXEC;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    for (i = physicalPageAddress / PAGESIZE; i < orig_brk / PAGESIZE; i++) {
+        region1PageTable[i]->pfn = physicalPageAddress / PAGESIZE;
+        region1PageTable[i]->uprot = 0;
+        region1PageTable[i]->kprot = PROT_READ | PROT_WRITE;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    for (i = physicalPageAddress / PAGESIZE; i < VMEM_1_LIMIT / PAGESIZE; i++) {
+        region1PageTable[i]->valid = 0;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //build R0 page table
+    void * physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
+    for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
+        region1PageTable[i]->valid = 0;
+        physicalPageAddress += PAGESIZE;
+    }
+
+    for (i = physicalPageAddress / PAGESIZE; i < VMEM_0_LIMIT / PAGESIZE; i++) {
+        region1PageTable[i]->pfn = physicalPageAddress / PAGESIZE;
+        region1PageTable[i]->uprot = 0;
+        region1PageTable[i]->kprot = PROT_READ | PROT_WRITE;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //tell hardware where the page tables are
+    WriteRegister(REG_PTR0, &region0PageTable);
+    WriteRegister(REG_PTR1, &region1PageTable);
     
     // Step 4: Switch on virtual memory
+    WriteRegister(REG_VM_ENABLE, 1);
     
     // Step 5: ?
     
