@@ -1,5 +1,6 @@
 #include <comp421/hardware.h>
 #include <comp421/yalnix.h>
+#include "stdint.h"
 
 #define NULL 0;
 
@@ -12,6 +13,9 @@ void TrapTtyReceive(ExceptionStackFrame *frame);
 void TrapTtyTransmit(ExceptionStackFrame *frame);
 
 void * vector_table[7];
+struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
+struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
+
 
 typedef struct FreePage FreePage;
 
@@ -20,6 +24,31 @@ struct FreePage {
 };
 
 struct FreePage * firstFreePage = NULL;
+
+/*
+ * Expects:
+ *  A page already marked as valid and kernel-readable,
+ *  the vpn for this page, and the region for this page.
+ * 
+ * Returns:
+ *  Nothing
+ */
+void
+allocatePage(struct pte page, int vpn, int region)
+{
+    // Map the provided virtual page to a free physical page
+    // and then use that virtual address to get the
+    // pointer to the next free physical page
+    page.pfn = (long) firstFreePage / PAGESIZE;
+    FreePage *p  = (FreePage*) (vpn * PAGESIZE * sizeof(void *));
+    if (region == 1) {
+        p += VMEM_REGION_SIZE;
+    }
+    // Clear TLB for this page
+    WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
+    // Now save that pointer, shortening the list by 1
+    firstFreePage = p->next;
+}
 
 void
 TrapKernel(ExceptionStackFrame *frame)
@@ -109,17 +138,9 @@ KernelStart(ExceptionStackFrame *frame,
             page < (FreePage *) KERNEL_STACK_BASE; 
             page += PAGESIZE) 
     {
-        TracePrintf(1, "Adding address %p to list\n", page);
         page->next = firstFreePage;
         firstFreePage = page;
     }
-    
-    TracePrintf(1, "Got through region 0\n");
-    TracePrintf(1, "Kernel stack base is at %p\n", (void *) KERNEL_STACK_BASE);
-    TracePrintf(1, "We have %d bytes of physical memory\n", pmem_size);
-    TracePrintf(1, "Size of void * is: %d\n", sizeof(void *));
-    TracePrintf(1, "Size of FreePage * is: %d\n", sizeof(FreePage *));
-    TracePrintf(1, "memory ends at %p\n", ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *));
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
@@ -128,14 +149,68 @@ KernelStart(ExceptionStackFrame *frame,
             page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *); 
             page += PAGESIZE) 
     {
-        TracePrintf(1, "Adding address %p to list\n", page);
         page->next = firstFreePage;
         firstFreePage = page;
     }
     
     // Step 3: Build page tables for Region 1 and Region 0
     
+    //build R1 page table
+    void * physicalPageAddress = (void *) DOWN_TO_PAGE(VMEM_1_BASE);
+    
+    //Add PTEs for Kernel text
+    int i;
+    for (i = 0; i < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; i++) {
+        TracePrintf(1, "i = %d, pfn = %d\n", i, (long) physicalPageAddress / PAGESIZE);
+        region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        region1PageTable[i].uprot = 0;
+        region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
+        region1PageTable[i].valid = 1;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //Add PTEs for kernel data/bss/heap
+    for (; i < (long) (orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
+        region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        region1PageTable[i].uprot = 0;
+        region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
+        region1PageTable[i].valid = 1;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //Add invalid PTEs for the rest of memory in R1
+    for (; i < VMEM_1_SIZE / PAGESIZE; i++) {
+        region1PageTable[i].valid = 0;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //build R0 page table
+    physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
+    for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
+        region0PageTable[i].valid = 0;
+        physicalPageAddress += PAGESIZE;
+    }
+
+    for (; i < VMEM_0_LIMIT / PAGESIZE; i++) {
+        region0PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        region0PageTable[i].uprot = 0;
+        region0PageTable[i].kprot = PROT_READ | PROT_WRITE;
+        region0PageTable[i].valid = 1;
+        physicalPageAddress += PAGESIZE;
+    }
+    
+    //tell hardware where the page tables are
+    WriteRegister(REG_PTR0, (RCS421RegVal) &region0PageTable);
+    WriteRegister(REG_PTR1, (RCS421RegVal) &region1PageTable);
+    
     // Step 4: Switch on virtual memory
+    //PAGE TABLE SANITY CHECK
+    int j;
+    for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) {
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+    }
+    TracePrintf(10, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
+    WriteRegister(REG_VM_ENABLE, 1);
     
     // Step 5: ?
     
