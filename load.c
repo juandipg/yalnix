@@ -256,8 +256,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>>     kprot = PROT_READ | PROT_WRITE
 //    >>>>     uprot = PROT_READ | PROT_WRITE
 //    >>>>     pfn   = a new page of physical memory
-     for (; vpn < stack_npg + data_bss_npg + text_npg + MEM_INVALID_PAGES; vpn++) 
+     for (vpn = (USER_STACK_LIMIT / PAGESIZE) - 1; vpn > ((USER_STACK_LIMIT / PAGESIZE) - 1) - stack_npg; vpn--)
      {
+         TracePrintf(1, "user stack vpn = %d\n", vpn);
          region0PageTable[vpn].valid = 1;
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          region0PageTable[vpn].uprot = PROT_READ | PROT_WRITE;
@@ -323,25 +324,29 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
     //>>>> Initialize pc for the current process to (void *)li.entry
     frame->pc = (void *)li.entry;
      TracePrintf(1, "changed stack exception frame PC\n");
+    
+    //int VPN = DOWN_TO_PAGE((long)++cpp / (long)PAGESIZE);
+    //TracePrintf(1, "cpp address = %p\n", ++cpp);
+    TracePrintf(1, "region0 page table valid bit for 506 = %d\n", region0PageTable[506].valid);
 
     /*
      *  Now, finally, build the argument list on the new stack.
      */
     *cpp++ = (char *)argcount;		/* the first value at cpp is argc */
     
-   // (void *)
+    
 
     cp2 = argbuf;
-    TracePrintf(1, "2\n");
+    //TracePrintf(1, "2\n");
     for (i = 0; i < (int) argcount; i++) {
         /* copy each argument and set argv */
-        TracePrintf(1, "3\n");
+        //TracePrintf(1, "3\n");
         *cpp++ = cp;
-        TracePrintf(1, "4\n");
+        //TracePrintf(1, "4\n");
         strcpy(cp, cp2);
-        TracePrintf(1, "5\n");
+        //TracePrintf(1, "5\n");
         cp += strlen(cp) + 1;
-        TracePrintf(1, "6\n");
+        //TracePrintf(1, "6\n");
         cp2 += strlen(cp2) + 1;
     }
     free(argbuf);

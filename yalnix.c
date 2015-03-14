@@ -40,19 +40,19 @@ allocatePage(int vpn, int region)
     // Map the provided virtual page to a free physical page
     // and then use that virtual address to get the
     // pointer to the next free physical page
-    TracePrintf(1, "vpn = %d\n", vpn);
+    TracePrintf(10, "vpn = %d\n", vpn);
     region0PageTable[vpn].pfn = (long) firstFreePage / PAGESIZE;
     FreePage *p  = (FreePage*) ((long)vpn * PAGESIZE);
-    TracePrintf(1, "p address = %p\n", p);
+    TracePrintf(10, "p address = %p\n", p);
     
-    TracePrintf(1, "Page table entry pfn: %d\n", region0PageTable[vpn].pfn);
+    TracePrintf(10, "Page table entry pfn: %d\n", region0PageTable[vpn].pfn);
     if (region == 1) {
         p += VMEM_REGION_SIZE;
     }
     // Clear TLB for this page
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
     // Now save that pointer, shortening the list by 1
-    TracePrintf(1, "page p->next = %p\n", p->next);
+    TracePrintf(10, "page p->next = %p\n", p->next);
     firstFreePage = p->next;
 }
 
