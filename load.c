@@ -13,6 +13,10 @@
 #include <comp421/hardware.h>
 #include <comp421/loadinfo.h>
 
+// TODO: put these in a header file
+void allocatePage(struct pte page, int vpn, int region);
+struct pte * region0PageTable;
+
 /*
  *  Load a program into the current process's address space.  The
  *  program comes from the Unix file identified by "name", and its
@@ -149,21 +153,21 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>> the new program being loaded.
     
     // TODO: this may not work since these are all physical addresses
-    int numFreePages = 0;
-    struct FreePage *nextFreePage = firstFreePage;
-    while (nextFreePage != NULL) {
-        numFreePages++;
-        nextFreePage = nextFreePage->next;
-    }
-    // TODO: numFreePages + <pages that would be freed>
-    if ((text_npg + data_bss_npg + stack_npg) > numFreePages) {
-        TracePrintf(0,
-                    "LoadProgram: program '%s' size too large for physical memory\n",
-                    name);
-        free(argbuf);
-        close(fd);
-        return (-1);
-    }
+//    int numFreePages = 0;
+//    struct FreePage *nextFreePage = firstFreePage;
+//    while (nextFreePage != NULL) {
+//        numFreePages++;
+//        nextFreePage = nextFreePage->next;
+//    }
+//    // TODO: numFreePages + <pages that would be freed>
+//    if ((text_npg + data_bss_npg + stack_npg) > numFreePages) {
+//        TracePrintf(0,
+//                    "LoadProgram: program '%s' size too large for physical memory\n",
+//                    name);
+//        free(argbuf);
+//        close(fd);
+//        return (-1);
+//    }
 
 //    >>>> Initialize sp for the current process to (char *)cpp.
 //    >>>> The value of cpp was initialized above.
@@ -208,13 +212,19 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>>     kprot = PROT_READ | PROT_WRITE
 //    >>>>     uprot = PROT_READ | PROT_EXEC
 //    >>>>     pfn   = a new page of physical memory
+     TracePrintf(1, "there are %d invalid pages\n", MEM_INVALID_PAGES);
+     TracePrintf(1, "about to initialize page tables "
+             "with starting vpn %d\n", vpn);
+     TracePrintf(1, "region0PageTable is at %p\n", &region0PageTable);
+     TracePrintf(1, "region0PageTable is at %p\n", &region0PageTable[vpn]);
      for (; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
          region0PageTable[vpn].valid = 1;
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          region0PageTable[vpn].uprot = PROT_READ | PROT_EXEC;
+         TracePrintf(1, "allocating a page\n");
          allocatePage(region0PageTable[vpn], vpn, 0);
      }
-
+     TracePrintf(1, "done with text\n");
     /* Then the data and bss pages */
 //    >>>> For the next data_bss_npg number of PTEs in the Region 0
 //    >>>> page table, initialize each PTE:
@@ -257,7 +267,8 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      *  Read the text and data from the file into memory.
      */
     if (read(fd, (void *)MEM_INVALID_SIZE, li.text_size+li.data_size)
-	!= li.text_size+li.data_size) {
+	!= (ssize_t) (li.text_size+li.data_size)) 
+    {
         TracePrintf(0, "LoadProgram: couldn't read for '%s'\n", name);
         free(argbuf);
         close(fd);
@@ -300,7 +311,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      */
     *cpp++ = (char *)argcount;		/* the first value at cpp is argc */
     cp2 = argbuf;
-    for (i = 0; i < argcount; i++) {      /* copy each argument and set argv */
+    for (i = 0; i < (int) argcount; i++) {      /* copy each argument and set argv */
         *cpp++ = cp;
         strcpy(cp, cp2);
         cp += strlen(cp) + 1;
@@ -321,9 +332,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>> current process to 0.
 //    >>>> Initialize psr for the current process to 0.
     
-    int i;
-    for (i = 0; i < NUM_REGS; i++) {
-        frame->regs[i] = 0;
+    int j;
+    for (j = 0; j < NUM_REGS; j++) {
+        frame->regs[j] = 0;
     }
     frame->psr = 0;
     return (0);

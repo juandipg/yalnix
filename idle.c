@@ -7,6 +7,7 @@ main(int argc, char **argv)
     (void) argv;
     
     for (;;) {
+        TracePrintf(0, "I'm idle =)\n");
         Pause();
     }
 }
