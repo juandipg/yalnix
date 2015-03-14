@@ -35,19 +35,24 @@ struct FreePage * firstFreePage = NULL;
  *  Nothing
  */
 void
-allocatePage(struct pte page, int vpn, int region)
+allocatePage(int vpn, int region)
 {
     // Map the provided virtual page to a free physical page
     // and then use that virtual address to get the
     // pointer to the next free physical page
-    page.pfn = (long) firstFreePage / PAGESIZE;
-    FreePage *p  = (FreePage*) (vpn * PAGESIZE * sizeof(void *));
+    TracePrintf(1, "vpn = %d\n", vpn);
+    region0PageTable[vpn].pfn = (long) firstFreePage / PAGESIZE;
+    FreePage *p  = (FreePage*) ((long)vpn * PAGESIZE);
+    TracePrintf(1, "p address = %p\n", p);
+    
+    TracePrintf(1, "Page table entry pfn: %d\n", region0PageTable[vpn].pfn);
     if (region == 1) {
         p += VMEM_REGION_SIZE;
     }
     // Clear TLB for this page
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
     // Now save that pointer, shortening the list by 1
+    TracePrintf(1, "page p->next = %p\n", p->next);
     firstFreePage = p->next;
 }
 
@@ -140,17 +145,20 @@ KernelStart(ExceptionStackFrame *frame,
             page += PAGESIZE) 
     {
         page->next = firstFreePage;
+        TracePrintf(1, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
     }
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
     // addressable unit of memory
+    TracePrintf(1, "Top address = %p\n", PMEM_BASE + pmem_size);
     for (page = (FreePage *) orig_brk; 
-            page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *); 
+            page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *);
             page += PAGESIZE) 
     {
         page->next = firstFreePage;
+        TracePrintf(1, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
     }
     
@@ -188,7 +196,7 @@ KernelStart(ExceptionStackFrame *frame,
     //build R0 page table
     physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
     for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        TracePrintf(1, "Setting region 0 vpn %d as invalid\n", i);
+        //TracePrintf(1, "Setting region 0 vpn %d as invalid\n", i);
         region0PageTable[i].valid = 0;
         region0PageTable[i].pfn = 0;
         physicalPageAddress += PAGESIZE;
@@ -211,13 +219,13 @@ KernelStart(ExceptionStackFrame *frame,
     //
     int j;
     for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
     }
     TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
     // R1;
     for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
     }
     TracePrintf(1, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
     
@@ -225,8 +233,10 @@ KernelStart(ExceptionStackFrame *frame,
     WriteRegister(REG_VM_ENABLE, 1);
     
     // Step 5: call load program
-    char * args[1];
-    args[0] = NULL;
+    char * args[2];
+    char *name = "idle";
+    args[0] = name;
+    args[1] = NULL;
     LoadProgram("idle", args, frame);
     //Halt(); // TODO: remove this
 }

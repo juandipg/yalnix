@@ -14,7 +14,7 @@
 #include <comp421/loadinfo.h>
 
 // TODO: put these in a header file
-void allocatePage(struct pte page, int vpn, int region);
+void allocatePage(int vpn, int region);
 struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
 
 /*
@@ -117,6 +117,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      *  pointers) times the size of each (sizeof(void *)).  The
      *  value must also be aligned down to a multiple of 8 boundary.
      */
+    TracePrintf(1, "ARGCOUNT = %d\n", argcount);
     cp = ((char *)USER_STACK_LIMIT) - size;
     cpp = (char **)((unsigned long)cp & (-1 << 4));	/* align cpp */
     cpp = (char **)((unsigned long)cpp - ((argcount + 4) * sizeof(void *)));
@@ -206,10 +207,10 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      int vpn = MEM_INVALID_PAGES;
     
     int j;
-    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
-    }
-    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
+//    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
+//        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
+//    }
+//    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
     /* First, the text pages */
 //    >>>> For the next text_npg number of PTEs in the Region 0
@@ -228,7 +229,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          region0PageTable[vpn].uprot = PROT_READ | PROT_EXEC;
          TracePrintf(1, "allocating a page\n");
-         allocatePage(region0PageTable[vpn], vpn, 0);
+         allocatePage(vpn, 0);
      }
      TracePrintf(1, "done with text\n");
     /* Then the data and bss pages */
@@ -242,8 +243,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
          region0PageTable[vpn].valid = 1;
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          region0PageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(region0PageTable[vpn], vpn, 0);
-     }     
+         allocatePage(vpn, 0);
+     }
+    TracePrintf(1, "done with bss\n");
 
     /* And finally the user stack pages */
 //    >>>> For stack_npg number of PTEs in the Region 0 page table
@@ -259,8 +261,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
          region0PageTable[vpn].valid = 1;
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          region0PageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(region0PageTable[vpn], vpn, 0);
-     }  
+         allocatePage(vpn, 0);
+     }
+    TracePrintf(1, "done with user stack\n");
 
     /*
      *  All pages for the new address space are now in place.  Flush
@@ -268,6 +271,8 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      *  we'll be able to do the read() into the new pages below.
      */
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    TracePrintf(1, "flushed tlb\n");
 
     /*
      *  Read the text and data from the file into memory.
@@ -285,7 +290,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
         return (-2);
     }
 
+    TracePrintf(1, "about to close file\n");
     close(fd);			/* we've read it all now */
+    TracePrintf(1, "closed file\n");
 
     /*
      *  Now set the page table entries for the program text to be readable
@@ -298,35 +305,53 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
          region0PageTable[vpn].kprot = PROT_READ | PROT_EXEC;
      }
     
+    TracePrintf(1, "done changing protection for r0 PTEs\n");
+    
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+     TracePrintf(1, "flush TLB\n");
 
     /*
      *  Zero out the bss
      */
     memset((void *)(MEM_INVALID_SIZE + li.text_size + li.data_size),
 	'\0', li.bss_size);
+     TracePrintf(1, "zero out bss\n");
 
     /*
      *  Set the entry point in the exception frame.
      */
     //>>>> Initialize pc for the current process to (void *)li.entry
-    frame->pc = (void *)li.entry;      
+    frame->pc = (void *)li.entry;
+     TracePrintf(1, "changed stack exception frame PC\n");
 
     /*
      *  Now, finally, build the argument list on the new stack.
      */
     *cpp++ = (char *)argcount;		/* the first value at cpp is argc */
+    
+   // (void *)
+
     cp2 = argbuf;
-    for (i = 0; i < (int) argcount; i++) {      /* copy each argument and set argv */
+    TracePrintf(1, "2\n");
+    for (i = 0; i < (int) argcount; i++) {
+        /* copy each argument and set argv */
+        TracePrintf(1, "3\n");
         *cpp++ = cp;
+        TracePrintf(1, "4\n");
         strcpy(cp, cp2);
+        TracePrintf(1, "5\n");
         cp += strlen(cp) + 1;
+        TracePrintf(1, "6\n");
         cp2 += strlen(cp2) + 1;
     }
     free(argbuf);
+    TracePrintf(1, "7\n");
     *cpp++ = NULL;	/* the last argv is a NULL pointer */
+    TracePrintf(1, "8\n");
     *cpp++ = NULL;	/* a NULL pointer for an empty envp */
+    TracePrintf(1, "9\n");
     *cpp++ = 0;		/* and terminate the auxiliary vector */
+     TracePrintf(1, "built arg list\n");
 
     /*
      *  Initialize all regs[] registers for the current process to 0,
@@ -343,5 +368,6 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
         frame->regs[j] = 0;
     }
     frame->psr = 0;
+     TracePrintf(1, "ABOUT TO RETURN\n");
     return (0);
 }
