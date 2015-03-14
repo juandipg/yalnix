@@ -15,7 +15,7 @@
 
 // TODO: put these in a header file
 void allocatePage(struct pte page, int vpn, int region);
-struct pte * region0PageTable;
+struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
 
 /*
  *  Load a program into the current process's address space.  The
@@ -203,7 +203,13 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 
 //    >>>> Leave the first MEM_INVALID_PAGES number of PTEs in the
 //    >>>> Region 0 page table unused (and thus invalid)
-     int vpn = MEM_INVALID_PAGES;      
+     int vpn = MEM_INVALID_PAGES;
+    
+    int j;
+    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
+        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
+    }
+    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
     /* First, the text pages */
 //    >>>> For the next text_npg number of PTEs in the Region 0
@@ -216,7 +222,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      TracePrintf(1, "about to initialize page tables "
              "with starting vpn %d\n", vpn);
      TracePrintf(1, "region0PageTable is at %p\n", &region0PageTable);
-     TracePrintf(1, "region0PageTable is at %p\n", &region0PageTable[vpn]);
+     TracePrintf(1, "region0PageTable is at %d\n", sizeof(region0PageTable));
      for (; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
          region0PageTable[vpn].valid = 1;
          region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
@@ -332,7 +338,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>> current process to 0.
 //    >>>> Initialize psr for the current process to 0.
     
-    int j;
+    //int j;
     for (j = 0; j < NUM_REGS; j++) {
         frame->regs[j] = 0;
     }
