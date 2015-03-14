@@ -24,6 +24,13 @@ struct FreePage {
     FreePage *next;
 };
 
+struct PCB {
+    int pid;
+    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
+    SavedContext savedContext;
+    PCB *nextProc;
+};
+
 struct FreePage * firstFreePage = NULL;
 
 /*
@@ -69,7 +76,6 @@ TrapClock(ExceptionStackFrame *frame)
 {
     (void) frame;
     TracePrintf(0, "trapclock\n");
-    Halt();
 }
 
 void
