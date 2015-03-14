@@ -158,11 +158,12 @@ KernelStart(ExceptionStackFrame *frame,
     
     //build R1 page table
     void * physicalPageAddress = (void *) DOWN_TO_PAGE(VMEM_1_BASE);
+    // TODO: change to: 
+    // int pfn = VMEM_1_BASE / PAGESIZE;
     
     //Add PTEs for Kernel text
     int i;
     for (i = 0; i < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; i++) {
-        TracePrintf(4, "i = %d, pfn = %d\n", i, (long) physicalPageAddress / PAGESIZE);
         region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
@@ -188,7 +189,6 @@ KernelStart(ExceptionStackFrame *frame,
     //build R0 page table
     physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
     for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        TracePrintf(1, "Setting region 0 vpn %d as invalid\n", i);
         region0PageTable[i].valid = 0;
         region0PageTable[i].pfn = 0;
         physicalPageAddress += PAGESIZE;
@@ -211,15 +211,17 @@ KernelStart(ExceptionStackFrame *frame,
     //
     int j;
     for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, 
+                region0PageTable[j].pfn, region0PageTable[j].kprot);
     }
-    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
+    TracePrintf(10, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
     // R1;
     for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) {
-        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, 
+                region1PageTable[j].pfn, region1PageTable[j].kprot);
     }
-    TracePrintf(1, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
+    TracePrintf(10, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
     
     // Step 4: Switch on virtual memory
     WriteRegister(REG_VM_ENABLE, 1);
