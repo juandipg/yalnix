@@ -13,10 +13,19 @@
 #include <comp421/hardware.h>
 #include <comp421/loadinfo.h>
 
-// TODO: put these in a header file
-void allocatePage(int vpn, int region);
-struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
+// BEGIN TODO: put these in a header file
+typedef struct PCB PCB;
 
+struct PCB {
+    int pid;
+    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
+    SavedContext savedContext;
+    PCB *nextProc;
+//    void *pc;
+//    void *sp;
+};
+void allocatePage(int vpn, int region, PCB *pcb);
+// END TODO
 /*
  *  Load a program into the current process's address space.  The
  *  program comes from the Unix file identified by "name", and its
@@ -38,7 +47,7 @@ struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
  *  in this case.
  */
 int
-LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
+LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
 {
     int fd;
     int status;
@@ -210,7 +219,6 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
 //        TracePrintf(1, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
 //    }
-//    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
     /* First, the text pages */
 //    >>>> For the next text_npg number of PTEs in the Region 0
@@ -219,19 +227,12 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>>     kprot = PROT_READ | PROT_WRITE
 //    >>>>     uprot = PROT_READ | PROT_EXEC
 //    >>>>     pfn   = a new page of physical memory
-     TracePrintf(1, "there are %d invalid pages\n", MEM_INVALID_PAGES);
-     TracePrintf(1, "about to initialize page tables "
-             "with starting vpn %d\n", vpn);
-     TracePrintf(1, "region0PageTable is at %p\n", &region0PageTable);
-     TracePrintf(1, "region0PageTable is at %d\n", sizeof(region0PageTable));
      for (; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
-         region0PageTable[vpn].valid = 1;
-         region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         region0PageTable[vpn].uprot = PROT_READ | PROT_EXEC;
-         TracePrintf(1, "allocating a page\n");
-         allocatePage(vpn, 0);
+         pcb->pageTable[vpn].valid = 1;
+         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pcb->pageTable[vpn].uprot = PROT_READ | PROT_EXEC;
+         allocatePage(vpn, 0, pcb);
      }
-     TracePrintf(1, "done with text\n");
     /* Then the data and bss pages */
 //    >>>> For the next data_bss_npg number of PTEs in the Region 0
 //    >>>> page table, initialize each PTE:
@@ -240,13 +241,12 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>>     uprot = PROT_READ | PROT_WRITE
 //    >>>>     pfn   = a new page of physical memory
      for (; vpn < data_bss_npg + text_npg + MEM_INVALID_PAGES; vpn++) {
-         region0PageTable[vpn].valid = 1;
-         region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         region0PageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, 0);
+         pcb->pageTable[vpn].valid = 1;
+         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+         allocatePage(vpn, 0, pcb);
      }
-    TracePrintf(1, "done with bss\n");
-
+    
     /* And finally the user stack pages */
 //    >>>> For stack_npg number of PTEs in the Region 0 page table
 //    >>>> corresponding to the user stack (the last page of the
@@ -259,12 +259,11 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      for (vpn = (USER_STACK_LIMIT / PAGESIZE) - 1; vpn > ((USER_STACK_LIMIT / PAGESIZE) - 1) - stack_npg; vpn--)
      {
          TracePrintf(1, "user stack vpn = %d\n", vpn);
-         region0PageTable[vpn].valid = 1;
-         region0PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         region0PageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, 0);
+         pcb->pageTable[vpn].valid = 1;
+         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+         allocatePage(vpn, 0, pcb);
      }
-    TracePrintf(1, "done with user stack\n");
 
     /*
      *  All pages for the new address space are now in place.  Flush
@@ -273,8 +272,6 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
      */
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
-    TracePrintf(1, "flushed tlb\n");
-
     /*
      *  Read the text and data from the file into memory.
      */
@@ -303,31 +300,23 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
 //    >>>> pages, set each PTE's kprot to PROT_READ | PROT_EXEC.
 
     for (vpn = MEM_INVALID_PAGES; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
-         region0PageTable[vpn].kprot = PROT_READ | PROT_EXEC;
+         pcb->pageTable[vpn].kprot = PROT_READ | PROT_EXEC;
      }
     
-    TracePrintf(1, "done changing protection for r0 PTEs\n");
-    
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
-     TracePrintf(1, "flush TLB\n");
 
     /*
      *  Zero out the bss
      */
     memset((void *)(MEM_INVALID_SIZE + li.text_size + li.data_size),
 	'\0', li.bss_size);
-     TracePrintf(1, "zero out bss\n");
 
     /*
      *  Set the entry point in the exception frame.
      */
     //>>>> Initialize pc for the current process to (void *)li.entry
     frame->pc = (void *)li.entry;
-     TracePrintf(1, "changed stack exception frame PC\n");
     
-    //int VPN = DOWN_TO_PAGE((long)++cpp / (long)PAGESIZE);
-    //TracePrintf(1, "cpp address = %p\n", ++cpp);
-    TracePrintf(1, "region0 page table valid bit for 506 = %d\n", region0PageTable[506].valid);
 
     /*
      *  Now, finally, build the argument list on the new stack.
@@ -340,23 +329,15 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
     //TracePrintf(1, "2\n");
     for (i = 0; i < (int) argcount; i++) {
         /* copy each argument and set argv */
-        //TracePrintf(1, "3\n");
         *cpp++ = cp;
-        //TracePrintf(1, "4\n");
         strcpy(cp, cp2);
-        //TracePrintf(1, "5\n");
         cp += strlen(cp) + 1;
-        //TracePrintf(1, "6\n");
         cp2 += strlen(cp2) + 1;
     }
     free(argbuf);
-    TracePrintf(1, "7\n");
     *cpp++ = NULL;	/* the last argv is a NULL pointer */
-    TracePrintf(1, "8\n");
     *cpp++ = NULL;	/* a NULL pointer for an empty envp */
-    TracePrintf(1, "9\n");
     *cpp++ = 0;		/* and terminate the auxiliary vector */
-     TracePrintf(1, "built arg list\n");
 
     /*
      *  Initialize all regs[] registers for the current process to 0,
@@ -373,6 +354,5 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame)
         frame->regs[j] = 0;
     }
     frame->psr = 0;
-     TracePrintf(1, "ABOUT TO RETURN\n");
     return (0);
 }
