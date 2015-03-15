@@ -1,8 +1,9 @@
 #include <comp421/hardware.h>
 #include <comp421/yalnix.h>
+#include <string.h>
 #include "stdint.h"
 
-#define NULL 0;
+//#define NULL 0;
 
 void TrapKernel(ExceptionStackFrame *frame);
 void TrapClock(ExceptionStackFrame *frame);
@@ -38,48 +39,16 @@ int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb);
 
 PCB initPCB;
 PCB idlePCB;
-
-void
-startInit()
-{
-    // Step 1: setup init page table, copying 
-    // over kernel stack into new physical pages
-    initPageTable(&initPCB);
-    
-    
-    
-    // Step 2: switch region 0 page table to new one
-    
-    // Step 3: flush TLB
-    
-    // Step 4: call LoadProgram(init)
-    
-    // Step 5: return
-    
-}
-
-void
-initPageTable(PCB *pcb) {
-    // invalidate everything on the user's space
-    int i;
-    for (i = 0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        pcb->pageTable[i].valid = 0;
-    }
-
-    // initialize kernel stack area
-    for (; i < VMEM_0_LIMIT / PAGESIZE; i++) {
-        allocatePage(i, 0, pcb);
-        pcb->pageTable[i].uprot = 0;
-        pcb->pageTable[i].kprot = PROT_READ | PROT_WRITE;
-        pcb->pageTable[i].valid = 1;
-    }
-}
+void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
+int currentProcClockTicks = 0;
+int requestedClockTicks = 0;
+int nextPid = 1;
 
 /*
  * Expects:
  *  A page already marked as valid and kernel-readable,
  *  the vpn for this page, and the region for this page.
- * 
+ *
  * Returns:
  *  Nothing
  */
@@ -89,35 +58,140 @@ allocatePage(int vpn, int region, PCB *pcb)
     // Map the provided virtual page to a free physical page
     // and then use that virtual address to get the
     // pointer to the next free physical page
-    TracePrintf(10, "vpn = %d\n", vpn);
-    pcb->pageTable[vpn].pfn = (long) firstFreePage / PAGESIZE;
-    FreePage *p  = (FreePage*) ((long)vpn * PAGESIZE);
-    TracePrintf(10, "p address = %p\n", p);
+    // TODO: take this out/refactor method to not use region param
+    (void)region;
+    TracePrintf(1, "vpn = %d\n", vpn);
+    int newPFN = (long) firstFreePage / PAGESIZE;
+    pcb->pageTable[vpn].pfn = newPFN;
     
-    TracePrintf(10, "Page table entry pfn: %d\n", pcb->pageTable[vpn].pfn);
-    if (region == 1) {
-        p += VMEM_REGION_SIZE;
-    }
+    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = newPFN;
+    FreePage *p  = (FreePage *)topR1PagePointer;
+    TracePrintf(1, "p address = %p\n", p);
+    TracePrintf(1, "Page table entry pfn: %d\n", pcb->pageTable[vpn].pfn);
+
     // Clear TLB for this page
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
     // Now save that pointer, shortening the list by 1
-    TracePrintf(10, "page p->next = %p\n", p->next);
+    TracePrintf(1, "page p->next = %p\n", p->next);
     firstFreePage = p->next;
 }
 
+void
+initPageTable(PCB *pcb) {
+    // invalidate everything on the user's space
+    int i;
+    for (i = 0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
+        pcb->pageTable[i].valid = 0;
+    }
+    
+    // initialize kernel stack area
+    for (; i < (long)VMEM_0_LIMIT / PAGESIZE; i++) {
+        allocatePage(i, 0, pcb);
+        TracePrintf(1, "pcb->pagetable[%d].pfn = %d\n", i, pcb->pageTable[i].pfn);
+        pcb->pageTable[i].uprot = 0;
+        pcb->pageTable[i].kprot = PROT_READ | PROT_WRITE;
+        pcb->pageTable[i].valid = 1;
+    }
+}
+
+
+SavedContext *
+startInit(SavedContext *ctx, void *frame, void *p2)
+{
+    TracePrintf(1, "inside startInit \n");
+    (void)p2;
+    // Step 1: setup init page table, copying 
+    // over kernel stack into new physical pages
+    initPageTable(&initPCB);
+    int vpn = KERNEL_STACK_BASE / PAGESIZE;
+    for (; vpn < KERNEL_STACK_LIMIT / PAGESIZE; vpn++) {
+        TracePrintf(1, "vpn = %d \n", vpn);
+        TracePrintf(1, "topR1PagePointer = %p\n", topR1PagePointer);
+        
+        void *r0Pointer = (void *) (VMEM_0_BASE + (long)(vpn * PAGESIZE));
+        TracePrintf(1, "r0Pointer = %p\n", r0Pointer);
+        
+        TracePrintf(1, "PFN = %d\n", initPCB.pageTable[vpn].pfn);
+        
+        region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = initPCB.pageTable[vpn].pfn;
+        WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
+        memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
+    }
+    
+    // Step 2: switch region 0 page table to new one
+    WriteRegister(REG_PTR0, (RCS421RegVal) &initPCB.pageTable);
+    
+    // Step 3: flush TLB
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    // Step 4: call LoadProgram(init)
+    char * args[2];
+    char *name = "init";
+    args[0] = name;
+    args[1] = NULL;
+    TracePrintf(1, "about to load program \n");
+    LoadProgram("init", args, (ExceptionStackFrame *)frame, &initPCB);
+    
+    // Step 5: return
+    TracePrintf(1, "about to return\n");
+    idlePCB.savedContext = *ctx;
+    idlePCB.pid = 0;
+    return ctx;
+}
+
+SavedContext *
+yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
+{
+    PCB *pcb1 = (PCB *)p1; //init
+    PCB *pcb2 = (PCB *)p2; //idle
+    
+    pcb1->savedContext = *ctx;
+    
+    WriteRegister(REG_PTR0, (RCS421RegVal) &pcb2->pageTable);
+    
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    return &pcb2->savedContext; //return idle's context, which will run right after
+}
+
+//KERNEL CALLS
+int
+YalnixDelay(int clock_ticks)
+{
+    TracePrintf(1, "clock ticks passed to YalnixDelay = %d\n", clock_ticks);
+    requestedClockTicks = clock_ticks;
+    if (clock_ticks < 0) {
+        return ERROR;
+    }
+    if (clock_ticks == 0) {
+        return 0;
+    }
+    currentProcClockTicks = 0;
+    ContextSwitch(yalnixContextSwitch, &initPCB.savedContext, &initPCB, &idlePCB);
+    return 0;
+}
+
+//TRAPS
 void
 TrapKernel(ExceptionStackFrame *frame)
 {
     (void) frame;
     TracePrintf(0, "trapkernel\n");
-    Halt();
+    if (frame->code == YALNIX_DELAY) {
+        YalnixDelay(frame->regs[1]);
+    }
 }
 
 void
 TrapClock(ExceptionStackFrame *frame)
 {
+    currentProcClockTicks++;
     (void) frame;
     TracePrintf(0, "trapclock\n");
+    if (currentProcClockTicks >= requestedClockTicks) {
+        ContextSwitch(yalnixContextSwitch, &idlePCB.savedContext, &idlePCB, &initPCB);
+    }
+    
 //    Halt();
 }
 
@@ -160,6 +234,8 @@ TrapTtyTransmit(ExceptionStackFrame *frame)
     TracePrintf(0, "trapttytransmit\n");
     Halt();
 }
+
+
 
 void
 KernelStart(ExceptionStackFrame *frame,
@@ -243,6 +319,10 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
+    //Initialize the ad-hoc page in R1 to PROT_READ | PROT_WRITE
+    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].valid = 1;
+    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].kprot = PROT_WRITE | PROT_READ;
+    
     //build R0 page table for idle process
     // TODO: consider moving this to a function
     // and somehow make it generic so that
@@ -295,9 +375,11 @@ KernelStart(ExceptionStackFrame *frame,
     args[0] = name;
     args[1] = NULL;
     LoadProgram("idle", args, frame, &idlePCB);
+    idlePCB.pid = nextPid++;
     
     // Step 6: call context switch to save idle and load init
-    ContextSwitch(startInit, &idlePCB.savedContext, &idlePCB, &initPCB);
+    ContextSwitch(startInit, &idlePCB.savedContext, frame, NULL);
+    TracePrintf(1, "done with ContextSwitch \n");
     
     // Step 7: return
     
