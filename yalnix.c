@@ -23,15 +23,14 @@ typedef struct FreePage FreePage;
 struct FreePage {
     FreePage *next;
 };
-
-struct PCB {
-    int pid;
-    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
-    SavedContext savedContext;
-    PCB *nextProc;
-};
-
 struct FreePage * firstFreePage = NULL;
+
+//struct PCB {
+//    int pid;
+//    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
+//    SavedContext savedContext;
+//    PCB *nextProc;
+//};
 
 /*
  * Expects:
@@ -76,6 +75,7 @@ TrapClock(ExceptionStackFrame *frame)
 {
     (void) frame;
     TracePrintf(0, "trapclock\n");
+    Halt();
 }
 
 void
@@ -151,69 +151,69 @@ KernelStart(ExceptionStackFrame *frame,
             page += PAGESIZE) 
     {
         page->next = firstFreePage;
-        TracePrintf(1, "Page %p 's next page is %p\n", page, page->next);
+        TracePrintf(5, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
     }
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
     // addressable unit of memory
-    TracePrintf(1, "Top address = %p\n", PMEM_BASE + pmem_size);
+    TracePrintf(5, "Top address = %p\n", PMEM_BASE + pmem_size);
     for (page = (FreePage *) orig_brk; 
             page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *);
             page += PAGESIZE) 
     {
         page->next = firstFreePage;
-        TracePrintf(1, "Page %p 's next page is %p\n", page, page->next);
+        TracePrintf(5, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
     }
     
     // Step 3: Build page tables for Region 1 and Region 0
     
     //build R1 page table
-    void * physicalPageAddress = (void *) DOWN_TO_PAGE(VMEM_1_BASE);
+    int pfn = VMEM_1_BASE / PAGESIZE;
     
     //Add PTEs for Kernel text
     int i;
     for (i = 0; i < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; i++) {
-        TracePrintf(4, "i = %d, pfn = %d\n", i, (long) physicalPageAddress / PAGESIZE);
-        region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
+        region1PageTable[i].pfn = pfn;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
         region1PageTable[i].valid = 1;
-        physicalPageAddress += PAGESIZE;
+        pfn++;
     }
     
     //Add PTEs for kernel data/bss/heap
     for (; i < (long) (orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
-        region1PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
+        region1PageTable[i].pfn = pfn;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
         region1PageTable[i].valid = 1;
-        physicalPageAddress += PAGESIZE;
+        pfn++;
     }
     
     //Add invalid PTEs for the rest of memory in R1
     for (; i < VMEM_1_SIZE / PAGESIZE; i++) {
         region1PageTable[i].valid = 0;
-        physicalPageAddress += PAGESIZE;
+        pfn++;
     }
     
     //build R0 page table
-    physicalPageAddress = DOWN_TO_PAGE(VMEM_0_BASE);
+    pfn = VMEM_0_BASE / PAGESIZE;
     for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        //TracePrintf(1, "Setting region 0 vpn %d as invalid\n", i);
         region0PageTable[i].valid = 0;
-        region0PageTable[i].pfn = 0;
-        physicalPageAddress += PAGESIZE;
+        pfn++;
     }
 
     for (; i < VMEM_0_LIMIT / PAGESIZE; i++) {
-        region0PageTable[i].pfn = (long) physicalPageAddress / PAGESIZE;
+        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
+        region0PageTable[i].pfn = pfn;
         region0PageTable[i].uprot = 0;
         region0PageTable[i].kprot = PROT_READ | PROT_WRITE;
         region0PageTable[i].valid = 1;
-        physicalPageAddress += PAGESIZE;
+        pfn++;
     }
     
     //tell hardware where the page tables are
@@ -222,16 +222,20 @@ KernelStart(ExceptionStackFrame *frame,
     
     
     // PAGE TABLE SANITY CHECK
-    //
+    // R0
     int j;
-    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) {
-        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region0PageTable[j].pfn, region0PageTable[j].kprot);
+    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) 
+    {
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", 
+                j, region0PageTable[j].pfn, region0PageTable[j].kprot);
     }
     TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
     
-    // R1;
-    for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) {
-        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+    // R1
+    for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) 
+    {
+        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", 
+                j, region1PageTable[j].pfn, region1PageTable[j].kprot);
     }
     TracePrintf(1, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
     
@@ -244,7 +248,6 @@ KernelStart(ExceptionStackFrame *frame,
     args[0] = name;
     args[1] = NULL;
     LoadProgram("idle", args, frame);
-    //Halt(); // TODO: remove this
 }
 
 /*
