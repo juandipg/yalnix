@@ -39,10 +39,13 @@ int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb);
 
 PCB initPCB;
 PCB idlePCB;
+
+PCB *currentPCB;
+
 void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
-int nextPid = 1;
+int nextPid = 0;
 
 /*
  * Expects:
@@ -98,6 +101,7 @@ initPageTable(PCB *pcb) {
 SavedContext *
 startInit(SavedContext *ctx, void *frame, void *p2)
 {
+    
     TracePrintf(1, "inside startInit \n");
     (void)p2;
     // Step 1: setup init page table, copying 
@@ -118,6 +122,8 @@ startInit(SavedContext *ctx, void *frame, void *p2)
         memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
     }
     
+    initPCB.pid = nextPid++;
+    
     // Step 2: switch region 0 page table to new one
     WriteRegister(REG_PTR0, (RCS421RegVal) &initPCB.pageTable);
     
@@ -135,7 +141,8 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     // Step 5: return
     TracePrintf(1, "about to return\n");
     idlePCB.savedContext = *ctx;
-    idlePCB.pid = 0;
+    currentPCB = &initPCB;
+
     return ctx;
 }
 
@@ -151,6 +158,7 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
+    currentPCB = pcb2;
     return &pcb2->savedContext; //return idle's context, which will run right after
 }
 
@@ -171,6 +179,12 @@ YalnixDelay(int clock_ticks)
     return 0;
 }
 
+int
+YalnixGetPid(void)
+{
+    return currentPCB->pid;
+}
+
 //TRAPS
 void
 TrapKernel(ExceptionStackFrame *frame)
@@ -178,7 +192,10 @@ TrapKernel(ExceptionStackFrame *frame)
     (void) frame;
     TracePrintf(0, "trapkernel\n");
     if (frame->code == YALNIX_DELAY) {
-        YalnixDelay(frame->regs[1]);
+        frame->regs[0] = YalnixDelay(frame->regs[1]);
+    }
+    if (frame->code == YALNIX_GETPID) {
+        frame->regs[0] = YalnixGetPid();
     }
 }
 
@@ -376,10 +393,11 @@ KernelStart(ExceptionStackFrame *frame,
     args[1] = NULL;
     LoadProgram("idle", args, frame, &idlePCB);
     idlePCB.pid = nextPid++;
-    
+
     // Step 6: call context switch to save idle and load init
     ContextSwitch(startInit, &idlePCB.savedContext, frame, NULL);
     TracePrintf(1, "done with ContextSwitch \n");
+   
     
     // Step 7: return
     

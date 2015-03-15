@@ -10,8 +10,7 @@ main(int argc, char **argv)
     TracePrintf(0, "Init =)\n");
     
     for (;;) {
-        TracePrintf(0, "About to delay =)\n");
+        TracePrintf(1, "Init's current pid = %d\n", GetPid());
         Delay(5);
-        TracePrintf(0, "Done delaying =)\n");
     }
 }
