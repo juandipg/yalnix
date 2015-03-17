@@ -24,7 +24,7 @@ struct PCB {
 //    void *pc;
 //    void *sp;
 };
-void allocatePage(int vpn, int region, PCB *pcb);
+void allocatePage(int vpn, struct pte *pageTable);
 // END TODO
 /*
  *  Load a program into the current process's address space.  The
@@ -231,7 +231,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_EXEC;
-         allocatePage(vpn, 0, pcb);
+         allocatePage(vpn, pcb->pageTable);
      }
     /* Then the data and bss pages */
 //    >>>> For the next data_bss_npg number of PTEs in the Region 0
@@ -244,7 +244,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, 0, pcb);
+         allocatePage(vpn, pcb->pageTable);
      }
     
     /* And finally the user stack pages */
@@ -262,7 +262,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, 0, pcb);
+         allocatePage(vpn, pcb->pageTable);
      }
 
     /*

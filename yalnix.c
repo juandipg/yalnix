@@ -3,8 +3,6 @@
 #include <string.h>
 #include "stdint.h"
 
-//#define NULL 0;
-
 void TrapKernel(ExceptionStackFrame *frame);
 void TrapClock(ExceptionStackFrame *frame);
 void TrapIllegal(ExceptionStackFrame *frame);
@@ -56,21 +54,19 @@ int nextPid = 0;
  *  Nothing
  */
 void
-allocatePage(int vpn, int region, PCB *pcb)
+allocatePage(int vpn, struct pte *pageTable)
 {
     // Map the provided virtual page to a free physical page
     // and then use that virtual address to get the
     // pointer to the next free physical page
-    // TODO: take this out/refactor method to not use region param
-    (void)region;
     TracePrintf(1, "vpn = %d\n", vpn);
     int newPFN = (long) firstFreePage / PAGESIZE;
-    pcb->pageTable[vpn].pfn = newPFN;
+    pageTable[vpn].pfn = newPFN;
     
     region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = newPFN;
     FreePage *p  = (FreePage *)topR1PagePointer;
     TracePrintf(1, "p address = %p\n", p);
-    TracePrintf(1, "Page table entry pfn: %d\n", pcb->pageTable[vpn].pfn);
+    TracePrintf(1, "Page table entry pfn: %d\n", pageTable[vpn].pfn);
 
     // Clear TLB for this page
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
@@ -89,7 +85,7 @@ initPageTable(PCB *pcb) {
     
     // initialize kernel stack area
     for (; i < (long)VMEM_0_LIMIT / PAGESIZE; i++) {
-        allocatePage(i, 0, pcb);
+        allocatePage(i, pcb->pageTable);
         TracePrintf(1, "pcb->pagetable[%d].pfn = %d\n", i, pcb->pageTable[i].pfn);
         pcb->pageTable[i].uprot = 0;
         pcb->pageTable[i].kprot = PROT_READ | PROT_WRITE;
