@@ -45,6 +45,10 @@ int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
 
+int virtualMemoryEnabled = 0;
+void *global_orig_brk;
+int global_pmem_size;
+
 /*
  * Expects:
  *  A page already marked as valid and kernel-readable,
@@ -256,8 +260,10 @@ KernelStart(ExceptionStackFrame *frame,
 {
     (void) frame;
     (void) pmem_size;
-    (void) orig_brk;
     (void) cmd_args;
+    
+    global_orig_brk = orig_brk;
+    global_pmem_size = pmem_size;
     
     // Step 1: Initialize interrupt vector table
     vector_table[TRAP_KERNEL] = TrapKernel;
@@ -291,7 +297,7 @@ KernelStart(ExceptionStackFrame *frame,
     // pmem_size is in bytes, which conveniently is the smallest
     // addressable unit of memory
     TracePrintf(5, "Top address = %p\n", PMEM_BASE + pmem_size);
-    for (page = (FreePage *) orig_brk; 
+    for (page = (FreePage *) global_orig_brk;
             page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *);
             page += PAGESIZE) 
     {
@@ -317,7 +323,7 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     //Add PTEs for kernel data/bss/heap
-    for (; i < (long) (orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
+    for (; i < (long) (global_orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
         TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
         region1PageTable[i].pfn = pfn;
         region1PageTable[i].uprot = 0;
@@ -336,7 +342,7 @@ KernelStart(ExceptionStackFrame *frame,
     region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].valid = 1;
     region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].kprot = PROT_WRITE | PROT_READ;
     
-    //build R0 page table for idle process
+    // build R0 page table for idle process
     // TODO: consider moving this to a function
     // and somehow make it generic so that
     // the pfn is allocated for new processes
@@ -381,6 +387,7 @@ KernelStart(ExceptionStackFrame *frame,
     
     // Step 4: Switch on virtual memory
     WriteRegister(REG_VM_ENABLE, 1);
+    virtualMemoryEnabled = 1;
     
     // Step 5: load idle program
     char * args[2];
@@ -407,11 +414,35 @@ KernelStart(ExceptionStackFrame *frame,
 int
 SetKernelBrk(void *addr)
 {
-    // TODO: don't take over the last page in region 1, we
-    // need it for ad-hoc mem copies (e.g. loading up init
-    // and idle, and forking)
-    
     (void) addr;
     TracePrintf(0, "setkernerlbrk\n");
+    
+    // Virtual memory not enabled
+    if (virtualMemoryEnabled == 0) {
+        // Check to make sure there is enough available memory
+        if (addr > PMEM_BASE + global_pmem_size) {
+            return -1;
+        }
+        
+        // Move the global_orig_brk up to the new memory address
+        global_orig_brk = addr;
+    }
+    
+    //Virtual memory enabled
+    else {
+        // Get the page aligned address
+        void *adjustedAddr = UP_TO_PAGE(addr);
+        
+        // Calculate the number of pages needed
+        int numPagesNeeded = (adjustedAddr - global_pmem_size) / PAGESIZE;
+        
+        // Get the number of free pages available in the free page linked list
+        int numFreePages = 0;
+        
+        
+        if (adjustedAddr > VMEM_1_LIMIT || numFreePages < numPagesNeeded) {
+            return -1;
+        }
+    }
     Halt();
 }
