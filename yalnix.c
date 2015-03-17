@@ -1,6 +1,7 @@
 #include <comp421/hardware.h>
 #include <comp421/yalnix.h>
 #include <string.h>
+#include <stdlib.h>
 #include "stdint.h"
 
 void TrapKernel(ExceptionStackFrame *frame);
@@ -12,11 +13,13 @@ void TrapTtyReceive(ExceptionStackFrame *frame);
 void TrapTtyTransmit(ExceptionStackFrame *frame);
 
 void * vector_table[7];
-struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
+//struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
+struct pte *region1PageTable;
 //extern struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
 
 typedef struct FreePage FreePage;
 
+int availPages = 0;
 struct FreePage {
     FreePage *next;
 };
@@ -46,7 +49,7 @@ int requestedClockTicks = 0;
 int nextPid = 0;
 
 int virtualMemoryEnabled = 0;
-void *global_orig_brk;
+void *kernel_brk;
 int global_pmem_size;
 
 /*
@@ -67,6 +70,7 @@ allocatePage(int vpn, struct pte *pageTable)
     int newPFN = (long) firstFreePage / PAGESIZE;
     pageTable[vpn].pfn = newPFN;
     
+    // TODO: derive vpn from pointer
     region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = newPFN;
     FreePage *p  = (FreePage *)topR1PagePointer;
     TracePrintf(1, "p address = %p\n", p);
@@ -77,6 +81,7 @@ allocatePage(int vpn, struct pte *pageTable)
     // Now save that pointer, shortening the list by 1
     TracePrintf(1, "page p->next = %p\n", p->next);
     firstFreePage = p->next;
+    availPages--;
 }
 
 void
@@ -262,7 +267,7 @@ KernelStart(ExceptionStackFrame *frame,
     (void) pmem_size;
     (void) cmd_args;
     
-    global_orig_brk = orig_brk;
+    kernel_brk = orig_brk;
     global_pmem_size = pmem_size;
     
     // Step 1: Initialize interrupt vector table
@@ -291,24 +296,32 @@ KernelStart(ExceptionStackFrame *frame,
         page->next = firstFreePage;
         TracePrintf(5, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
+        availPages++;
     }
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
     // addressable unit of memory
     TracePrintf(5, "Top address = %p\n", PMEM_BASE + pmem_size);
-    for (page = (FreePage *) global_orig_brk;
+    for (page = (FreePage *) kernel_brk;
             page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *);
             page += PAGESIZE) 
     {
         page->next = firstFreePage;
         TracePrintf(5, "Page %p 's next page is %p\n", page, page->next);
         firstFreePage = page;
+        availPages++;
     }
     
     // Step 3: Build page tables for Region 1 and Region 0
     
     //build R1 page table
+    
+    // 1st allocate space in the heap to store the page table
+    region1PageTable = malloc((VMEM_1_SIZE / PAGESIZE) * sizeof(struct pte));
+    TracePrintf(1, "requesting %d bytes\n", (VMEM_1_SIZE / PAGESIZE) * sizeof(struct pte));
+    TracePrintf(1, "malloc provided %p\n", region1PageTable);
+    
     int pfn = VMEM_1_BASE / PAGESIZE;
     
     //Add PTEs for Kernel text
@@ -319,16 +332,18 @@ KernelStart(ExceptionStackFrame *frame,
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
         region1PageTable[i].valid = 1;
+        TracePrintf(1, "region1PageTable[%d] is at %p\n", i, &region1PageTable[i]);
         pfn++;
     }
     
     //Add PTEs for kernel data/bss/heap
-    for (; i < (long) (global_orig_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
+    for (; i < (long) (kernel_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
         TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
         region1PageTable[i].pfn = pfn;
         region1PageTable[i].uprot = 0;
         region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
         region1PageTable[i].valid = 1;
+        TracePrintf(1, "region1PageTable[%d] is at %p\n", i, &region1PageTable[i]);
         pfn++;
     }
     
@@ -414,35 +429,36 @@ KernelStart(ExceptionStackFrame *frame,
 int
 SetKernelBrk(void *addr)
 {
-    (void) addr;
     TracePrintf(0, "setkernerlbrk\n");
-    
+    TracePrintf(1, "current kernel_brk is %p\n", kernel_brk);
     // Virtual memory not enabled
     if (virtualMemoryEnabled == 0) {
         // Check to make sure there is enough available memory
-        if (addr > PMEM_BASE + global_pmem_size) {
+        if ((long) addr > PMEM_BASE + global_pmem_size) {
             return -1;
         }
         
         // Move the global_orig_brk up to the new memory address
-        global_orig_brk = addr;
-    }
-    
-    //Virtual memory enabled
-    else {
-        // Get the page aligned address
-        void *adjustedAddr = UP_TO_PAGE(addr);
-        
+        kernel_brk = addr;
+    } else { //Virtual memory enabled
+        TracePrintf(1, "virtual memory enabled setkernelbrk\n");
         // Calculate the number of pages needed
-        int numPagesNeeded = (adjustedAddr - global_pmem_size) / PAGESIZE;
+        int numPagesNeeded = (UP_TO_PAGE(addr) - UP_TO_PAGE(kernel_brk)) / PAGESIZE;
         
-        // Get the number of free pages available in the free page linked list
-        int numFreePages = 0;
-        
-        
-        if (adjustedAddr > VMEM_1_LIMIT || numFreePages < numPagesNeeded) {
+        if (addr > topR1PagePointer || availPages < numPagesNeeded) {
             return -1;
         }
+        
+        int vpnStart = (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE) / PAGESIZE;
+        int vpn;
+        for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
+            region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+            region1PageTable[vpn].uprot = 0;
+            region1PageTable[vpn].valid = 1;
+            allocatePage(vpn, region1PageTable);
+        }
+        kernel_brk = addr;
     }
-    Halt();
+    TracePrintf(1, "kernel_brk is now %p\n", kernel_brk);
+    return 0;
 }
