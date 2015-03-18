@@ -337,7 +337,7 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     //Add PTEs for kernel data/bss/heap
-    for (; i < (long) (kernel_brk - VMEM_1_BASE)/ PAGESIZE; i++) {
+    for (; i < (long) (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE)/ PAGESIZE; i++) {
         TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
         region1PageTable[i].pfn = pfn;
         region1PageTable[i].uprot = 0;
@@ -380,7 +380,7 @@ KernelStart(ExceptionStackFrame *frame,
     
     //tell hardware where the page tables are
     WriteRegister(REG_PTR0, (RCS421RegVal) &idlePCB.pageTable);
-    WriteRegister(REG_PTR1, (RCS421RegVal) &region1PageTable);
+    WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
     // PAGE TABLE SANITY CHECK
     // R0
