@@ -157,7 +157,6 @@ YalnixGetPid(void)
 void
 TrapKernel(ExceptionStackFrame *frame)
 {
-    (void) frame;
     TracePrintf(0, "trapkernel\n");
     if (frame->code == YALNIX_DELAY) {
         frame->regs[0] = YalnixDelay(frame->regs[1]);
@@ -224,8 +223,7 @@ void
 KernelStart(ExceptionStackFrame *frame,
         unsigned int pmem_size, void *orig_brk, char **cmd_args)
 {
-    (void) frame;
-    (void) pmem_size;
+    // TODO: load the requested program instead of always init
     (void) cmd_args;
     
     kernel_brk = orig_brk;
