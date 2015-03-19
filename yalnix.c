@@ -6,7 +6,7 @@
 #include "stdint.h"
 #include "yalnix.h"
 
-void * vector_table[7];
+void * vector_table[TRAP_VECTOR_SIZE];
 //struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
 struct pte *region1PageTable;
 
@@ -28,11 +28,11 @@ int global_pmem_size;
 
 void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
 
-
 /*
  * Expects:
- *  A page already marked as valid and kernel-readable,
- *  the vpn for this page, and the region for this page.
+ *  A valid vpn to which the new physical page should be
+ *  mapped. The pointer to the pageTable that this vpn
+ *  belongs to.
  *
  * Returns:
  *  Nothing
@@ -76,7 +76,6 @@ initPageTable(PCB *pcb) {
         pcb->pageTable[i].valid = 1;
     }
 }
-
 
 SavedContext *
 startInit(SavedContext *ctx, void *frame, void *p2)
@@ -221,8 +220,6 @@ TrapTtyTransmit(ExceptionStackFrame *frame)
     Halt();
 }
 
-
-
 void
 KernelStart(ExceptionStackFrame *frame,
         unsigned int pmem_size, void *orig_brk, char **cmd_args)
@@ -242,6 +239,12 @@ KernelStart(ExceptionStackFrame *frame,
     vector_table[TRAP_MATH] = TrapMath;
     vector_table[TRAP_TTY_RECEIVE] = TrapTtyReceive;
     vector_table[TRAP_TTY_TRANSMIT] = TrapTtyTransmit;
+    
+    // The rest should be NULL
+    int i;
+    for (i = TRAP_TTY_TRANSMIT + 1; i < TRAP_VECTOR_SIZE; i++) {
+        vector_table[i] = NULL;
+    }
 
     WriteRegister(REG_VECTOR_BASE, (RCS421RegVal) &vector_table);
     TracePrintf(0, "Saved addr of ivt to REG_VECTOR_BASE register\n");
@@ -287,29 +290,29 @@ KernelStart(ExceptionStackFrame *frame,
     int pfn = VMEM_1_BASE / PAGESIZE;
     
     //Add PTEs for Kernel text
-    int i;
-    for (i = 0; i < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; i++) {
-        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
-        region1PageTable[i].pfn = pfn;
-        region1PageTable[i].uprot = 0;
-        region1PageTable[i].kprot = PROT_READ | PROT_EXEC;
-        region1PageTable[i].valid = 1;
+    int vpn;
+    for (vpn = 0; vpn < (long) UP_TO_PAGE(&_etext - VMEM_1_BASE) / PAGESIZE; vpn++) {
+        TracePrintf(4, "vpn = %d, pfn = %d\n", vpn, pfn);
+        region1PageTable[vpn].pfn = pfn;
+        region1PageTable[vpn].uprot = 0;
+        region1PageTable[vpn].kprot = PROT_READ | PROT_EXEC;
+        region1PageTable[vpn].valid = 1;
         pfn++;
     }
     
     //Add PTEs for kernel data/bss/heap
-    for (; i < (long) (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE)/ PAGESIZE; i++) {
-        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
-        region1PageTable[i].pfn = pfn;
-        region1PageTable[i].uprot = 0;
-        region1PageTable[i].kprot = PROT_READ | PROT_WRITE;
-        region1PageTable[i].valid = 1;
+    for (; vpn < (long) (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE)/ PAGESIZE; vpn++) {
+        TracePrintf(4, "vpn = %d, pfn = %d\n", vpn, pfn);
+        region1PageTable[vpn].pfn = pfn;
+        region1PageTable[vpn].uprot = 0;
+        region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+        region1PageTable[vpn].valid = 1;
         pfn++;
     }
     
     //Add invalid PTEs for the rest of memory in R1
-    for (; i < VMEM_1_SIZE / PAGESIZE; i++) {
-        region1PageTable[i].valid = 0;
+    for (; vpn < VMEM_1_SIZE / PAGESIZE; vpn++) {
+        region1PageTable[vpn].valid = 0;
         pfn++;
     }
     
@@ -324,17 +327,17 @@ KernelStart(ExceptionStackFrame *frame,
     // but not for this special case
     // (here we have to make them the same as virtual pages)
     pfn = VMEM_0_BASE / PAGESIZE;
-    for (i=0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-        idlePCB.pageTable[i].valid = 0;
+    for (vpn = 0; vpn < KERNEL_STACK_BASE / PAGESIZE; vpn++) {
+        idlePCB.pageTable[vpn].valid = 0;
         pfn++;
     }
 
-    for (; i < VMEM_0_LIMIT / PAGESIZE; i++) {
-        TracePrintf(4, "vpn = %d, pfn = %d\n", i, pfn);
-        idlePCB.pageTable[i].pfn = pfn;
-        idlePCB.pageTable[i].uprot = 0;
-        idlePCB.pageTable[i].kprot = PROT_READ | PROT_WRITE;
-        idlePCB.pageTable[i].valid = 1;
+    for (; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
+        TracePrintf(4, "vpn = %d, pfn = %d\n", vpn, pfn);
+        idlePCB.pageTable[vpn].pfn = pfn;
+        idlePCB.pageTable[vpn].uprot = 0;
+        idlePCB.pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+        idlePCB.pageTable[vpn].valid = 1;
         pfn++;
     }
     
