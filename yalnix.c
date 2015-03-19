@@ -1,56 +1,33 @@
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include <comp421/hardware.h>
 #include <comp421/yalnix.h>
-#include <string.h>
-#include <stdlib.h>
 #include "stdint.h"
-
-void TrapKernel(ExceptionStackFrame *frame);
-void TrapClock(ExceptionStackFrame *frame);
-void TrapIllegal(ExceptionStackFrame *frame);
-void TrapMemory(ExceptionStackFrame *frame);
-void TrapMath(ExceptionStackFrame *frame);
-void TrapTtyReceive(ExceptionStackFrame *frame);
-void TrapTtyTransmit(ExceptionStackFrame *frame);
+#include "yalnix.h"
 
 void * vector_table[7];
 //struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
 struct pte *region1PageTable;
-//extern struct pte region0PageTable[VMEM_0_SIZE / PAGESIZE];
 
-typedef struct FreePage FreePage;
-
+// linked list of free pages
 int availPages = 0;
-struct FreePage {
-    FreePage *next;
-};
 struct FreePage * firstFreePage = NULL;
-
-typedef struct PCB PCB;
-
-struct PCB {
-    int pid;
-    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
-    SavedContext savedContext;
-    PCB *nextProc;
-//    void *pc;
-//    void *sp;
-};
-
-int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb);
 
 PCB initPCB;
 PCB idlePCB;
 
 PCB *currentPCB;
-
-void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
 
-int virtualMemoryEnabled = 0;
+bool virtualMemoryEnabled = false;
 void *kernel_brk;
 int global_pmem_size;
+
+void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
+
 
 /*
  * Expects:
@@ -64,11 +41,11 @@ void
 allocatePage(int vpn, struct pte *pageTable)
 {
     // Map the provided virtual page to a free physical page
-    // and then use that virtual address to get the
-    // pointer to the next free physical page
     int newPFN = (long) firstFreePage / PAGESIZE;
     pageTable[vpn].pfn = newPFN;
     
+    // Use the ad-hoc virtual page to recover the pointer
+    // to the next free page from physical memory
     // TODO: derive vpn from pointer
     region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = newPFN;
     FreePage *p  = (FreePage *)topR1PagePointer;
@@ -129,7 +106,7 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     char *name = "init";
     args[0] = name;
     args[1] = NULL;
-    LoadProgram("init", args, (ExceptionStackFrame *)frame, &initPCB);
+    LoadProgram(name, args, (ExceptionStackFrame *)frame, &initPCB);
     
     // Step 5: return
     idlePCB.savedContext = *ctx;
@@ -361,7 +338,7 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
-    //tell hardware where the page tables are
+    // tell hardware where the page tables are
     WriteRegister(REG_PTR0, (RCS421RegVal) &idlePCB.pageTable);
     WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
@@ -397,9 +374,7 @@ KernelStart(ExceptionStackFrame *frame,
 
     // Step 6: call context switch to save idle and load init
     ContextSwitch(startInit, &idlePCB.savedContext, frame, NULL);
-    TracePrintf(1, "done with ContextSwitch \n");
-   
-    
+
     // Step 7: return
 }
 
@@ -412,8 +387,8 @@ SetKernelBrk(void *addr)
 {
     TracePrintf(0, "setkernerlbrk\n");
     TracePrintf(1, "current kernel_brk is %p\n", kernel_brk);
-    // Virtual memory not enabled
-    if (virtualMemoryEnabled == 0) {
+    
+    if (!virtualMemoryEnabled) {
         // Check to make sure there is enough available memory
         if ((long) addr > PMEM_BASE + global_pmem_size) {
             return -1;
@@ -421,7 +396,7 @@ SetKernelBrk(void *addr)
         
         // Move the global_orig_brk up to the new memory address
         kernel_brk = addr;
-    } else { //Virtual memory enabled
+    } else { 
         TracePrintf(1, "virtual memory enabled setkernelbrk\n");
         // Calculate the number of pages needed
         int numPagesNeeded = (UP_TO_PAGE(addr) - UP_TO_PAGE(kernel_brk)) / PAGESIZE;

@@ -7,25 +7,13 @@
 
 #include <fcntl.h>
 #include <unistd.h>
-#include <string.h>
 #include <stdlib.h>
-
+#include <string.h>
 #include <comp421/hardware.h>
 #include <comp421/loadinfo.h>
+#include "yalnix.h"
 
-// BEGIN TODO: put these in a header file
-typedef struct PCB PCB;
 
-struct PCB {
-    int pid;
-    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
-    SavedContext savedContext;
-    PCB *nextProc;
-//    void *pc;
-//    void *sp;
-};
-void allocatePage(int vpn, struct pte *pageTable);
-// END TODO
 /*
  *  Load a program into the current process's address space.  The
  *  program comes from the Unix file identified by "name", and its
