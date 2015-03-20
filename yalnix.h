@@ -14,9 +14,11 @@ typedef struct PCB PCB;
 
 struct PCB {
     int pid;
-    struct pte pageTable[VMEM_0_SIZE / PAGESIZE];
+    struct pte pageTable[PAGE_TABLE_LEN];
     SavedContext savedContext;
     PCB *nextProc;
+    int brkVPN;
+    int userStackVPN;
 };
 
 typedef struct FreePage FreePage;

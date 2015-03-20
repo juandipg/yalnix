@@ -252,6 +252,9 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
          allocatePage(vpn, pcb->pageTable);
      }
+    
+    pcb->brkVPN = data_bss_npg + text_npg + MEM_INVALID_PAGES - 1;
+    pcb->userStackVPN = vpn + 1;
 
     /*
      *  All pages for the new address space are now in place.  Flush
