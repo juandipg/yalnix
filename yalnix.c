@@ -153,6 +153,53 @@ YalnixGetPid(void)
     return currentPCB->pid;
 }
 
+int
+YalnixBrk(void *addr)
+{
+    //TODO: can any of this be factored out?
+    
+    TracePrintf(1, "YalnixBrk\n");
+    TracePrintf(1, "Addr passed to yalnixBrk = %p\n", addr);
+    
+    int addrVPN = UP_TO_PAGE(addr) / PAGESIZE;
+    
+    // Calculate the number of pages needed
+    int numPagesNeeded = addrVPN - currentPCB->brkVPN;
+    
+    // Check to make sure there will be an extra page between
+    // the stack and the heap, and check to make sure there
+    // is enough free physical memory
+    if (addrVPN > (currentPCB->userStackVPN - 1) || availPages < numPagesNeeded) {
+        TracePrintf(1, "About to return -1 from YalnixBrk\n");
+        TracePrintf(1, "UP_TO_PAGE(addr) = %d\n", UP_TO_PAGE(addr));
+        TracePrintf(1, "(currentPCB->userStackVPN - 1) = %d\n", (currentPCB->userStackVPN - 1));
+        TracePrintf(1, "numPagesNeeded = %d\n", numPagesNeeded);
+        return -1;
+    }
+    
+    if (numPagesNeeded < 0) {
+        //free the pages
+        
+    } else {
+        //allocate pages
+        TracePrintf(1, "allocating pages in yalnixBrk\n");
+        int vpnStart = currentPCB->brkVPN + 1;
+        int vpn;
+        for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
+            TracePrintf(1, "allocating page at vpn=%d\n", vpn);
+            currentPCB->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+            currentPCB->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+            currentPCB->pageTable[vpn].valid = 1;
+            allocatePage(vpn, currentPCB->pageTable);
+            TracePrintf(1, "currentPCB->pageTable[vpn].pfn = %d\n", currentPCB->pageTable[vpn].pfn);
+        }
+    }
+    currentPCB->brkVPN += numPagesNeeded;
+    TracePrintf(1, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
+    
+    return 0;
+}
+
 //TRAPS
 void
 TrapKernel(ExceptionStackFrame *frame)
@@ -163,6 +210,9 @@ TrapKernel(ExceptionStackFrame *frame)
     }
     if (frame->code == YALNIX_GETPID) {
         frame->regs[0] = YalnixGetPid();
+    }
+    if (frame->code == YALNIX_BRK) {
+        frame->regs[0] = YalnixBrk((void *)frame->regs[1]);
     }
 }
 
@@ -192,6 +242,7 @@ TrapMemory(ExceptionStackFrame *frame)
 {
     (void) frame;
     TracePrintf(0, "trapmemory\n");
+    TracePrintf(1, "Address causing trapmem = %p\n", frame->addr);
     Halt();
 }
 
@@ -250,7 +301,7 @@ KernelStart(ExceptionStackFrame *frame,
     idlePCB = malloc(sizeof(PCB));
     TracePrintf(1, "Address of idlePCB after malloc: %p\n", idlePCB);
 
-    region1PageTable = malloc((VMEM_1_SIZE / PAGESIZE) * sizeof(struct pte));
+    region1PageTable = malloc(PAGE_TABLE_SIZE);
     
     
     //WARNING: do not make any malloc calls past this
