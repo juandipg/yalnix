@@ -5,6 +5,7 @@
 
 char *str1;
 int *intArr;
+int pid;
 
 int
 main(int argc, char **argv)
@@ -12,30 +13,14 @@ main(int argc, char **argv)
     (void) argc;
     (void) argv;
     
-    TracePrintf(0, "Init =)\n");
-    
-    str1 = malloc(10*sizeof(char));
-    TracePrintf(0, "malloc str1\n");
-    intArr = malloc(200 * sizeof(int));
-    TracePrintf(0, "Address of int array = %p\n", intArr);
-    TracePrintf(0, "malloc intArr\n");
-    
-    strcpy(str1, "abcdefgh\n");
-    intArr[10] = 20;
-    TracePrintf(1, "Array allocated from init has 10th element = %d\n", intArr[10]);
-    TracePrintf(1, "String allocated from init: %s\n", str1);
-    
-    intArr = realloc(intArr, 100000 * sizeof(int));
-    intArr[99999] = 777;
-    
-    TracePrintf(1, "Array allocated from init has 99,999th element = %d\n", intArr[99999]);
-    
-    free(intArr);
-    free(str1);
-    
-    TracePrintf(1, "Invalid access: Array allocated from init has 10th element = %d\n", intArr[10]);
-    TracePrintf(1, "Invalid access: String allocated from init: %s\n", str1);
-    TracePrintf(1, "Invalid access: Array allocated from init has 99,999th element = %d\n", intArr[99999]);
+    pid = Fork();
+    if (pid == 0) {
+        TracePrintf(1, "I'm a real process! (child)\n");
+    } else if (pid == -1) {
+        TracePrintf(1, "yalnix refused my child-making\n");
+    } else {
+        TracePrintf(1, "uninmplemented wth?\n");
+    }
     
     for (;;) {
         TracePrintf(1, "Init's current pid = %d\n", GetPid());

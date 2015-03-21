@@ -18,6 +18,13 @@ PCB *initPCB;
 PCB *idlePCB;
 
 PCB *currentPCB;
+
+PCB *firstReadyPCB;
+PCB *lastReadyPCB;
+
+PCB *firstBlockedPCB;
+PCB *lastBlockedPCB;
+
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
@@ -94,7 +101,7 @@ initPageTable(PCB *pcb) {
     }
     
     // initialize kernel stack area
-    for (; i < (long)VMEM_0_LIMIT / PAGESIZE; i++) {
+    for (; i < (long) VMEM_0_LIMIT / PAGESIZE; i++) {
         allocatePage(i, pcb->pageTable);
         pcb->pageTable[i].uprot = 0;
         pcb->pageTable[i].kprot = PROT_READ | PROT_WRITE;
@@ -133,7 +140,7 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     LoadProgram(name, args, (ExceptionStackFrame *)frame, initPCB);
     
     // Step 5: return
-    idlePCB->savedContext = *ctx;
+    // idlePCB->savedContext = *ctx;
     currentPCB = initPCB;
 
     return ctx;
@@ -230,6 +237,95 @@ YalnixBrk(void *addr)
     return 0;
 }
 
+void
+YalnixFork(ExceptionStackFrame *frame)
+{
+    TracePrintf(1, "yalnixfork\n");
+    
+    // create a new PCB for the new process
+    PCB *childPCB = malloc(sizeof (PCB));
+    
+    TracePrintf(1, "storing child pcb at %p\n", childPCB);
+    
+    TracePrintf(1, "allocated space for child pcb\n");
+    
+    // clone the current PCB
+    *childPCB = *currentPCB;
+    
+    // assign it a new pid
+    childPCB->pid = nextPid++;
+    
+    // call CloneProcess inside ContextSwitch
+    ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
+}
+
+SavedContext *
+CloneProcess(SavedContext *ctx, void *p1, void *p2)
+{
+    TracePrintf(1, "clone start, flushing to see what happens\n");
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    PCB *childPCB = (PCB *) p1;
+    ExceptionStackFrame *frame = (ExceptionStackFrame *) p2;
+    
+    // return value for the parent
+    frame->regs[0] = childPCB->pid;
+    
+    // make sure we have enough space for the new process
+    int reqdPageCount = 0;
+    int vpn;
+    for (vpn = MEM_INVALID_PAGES; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
+        reqdPageCount += currentPCB->pageTable[vpn].valid;
+    }
+    if (reqdPageCount > availPages) {
+        TracePrintf(1, "not enough memory to fork. required pages = %d, "
+                "available pages = %d \n", reqdPageCount, availPages);
+        frame->regs[0] = ERROR;
+        return ctx;
+    }
+    
+    // copy the program into new physical pages
+    for (vpn = 0; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
+        if (childPCB->pageTable[vpn].valid == 1) {
+            allocatePage(vpn, childPCB->pageTable);
+            void *r0Pointer = (void *) (VMEM_0_BASE + (long)(vpn * PAGESIZE));
+            region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = childPCB->pageTable[vpn].pfn;
+            WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
+            memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
+        }
+    }
+    
+    TracePrintf(1, "flushing to see what happens (Again)\n");
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    // switch to region 0 page table of new process and flush TLB
+    WriteRegister(REG_PTR0, (RCS421RegVal) childPCB->pageTable);
+    
+    PageTableSanityCheck(1, 10, childPCB->pageTable);
+    
+    TracePrintf(1, "child pcb r0 page table is at %p\n", childPCB->pageTable);
+    TracePrintf(1, "flushing r0 tlb now\n");
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    // return value for the child
+    frame->regs[0] = 0;
+    
+    // move parent to ready queue
+    // TODO?
+//    currentPCB->nextProc = firstReadyPCB;
+//    currentPCB->prevProc = NULL;
+//    firstReadyPCB = currentPCB;
+//    lastReadyPCB = currentPCB;
+    
+    // set current process to child
+    currentPCB = childPCB;
+    
+    TracePrintf(1, "done cloning process\n");
+    
+    // return;
+    return ctx;
+}
+
 //TRAPS
 void
 TrapKernel(ExceptionStackFrame *frame)
@@ -244,6 +340,9 @@ TrapKernel(ExceptionStackFrame *frame)
     if (frame->code == YALNIX_BRK) {
         frame->regs[0] = YalnixBrk((void *)frame->regs[1]);
     }
+    if (frame->code == YALNIX_FORK) {
+        YalnixFork(frame);
+    }
 }
 
 void
@@ -252,6 +351,8 @@ TrapClock(ExceptionStackFrame *frame)
     currentProcClockTicks++;
     (void) frame;
     TracePrintf(0, "trapclock\n");
+    // TODO: generalize trapclock and remove return
+    return;
     if (currentProcClockTicks >= requestedClockTicks) {
         ContextSwitch(yalnixContextSwitch, &idlePCB->savedContext, idlePCB, initPCB);
     }
@@ -431,23 +532,7 @@ KernelStart(ExceptionStackFrame *frame,
     WriteRegister(REG_PTR0, (RCS421RegVal) &idlePCB->pageTable);
     WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
-    // PAGE TABLE SANITY CHECK
-    // R0
-    int j;
-    for (j=0; j < VMEM_0_LIMIT/ PAGESIZE; j++) 
-    {
-        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", 
-                j, idlePCB->pageTable[j].pfn, idlePCB->pageTable[j].kprot);
-    }
-    TracePrintf(1, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
-    
-    // R1
-    for (j=0; j < (VMEM_1_LIMIT - VMEM_1_BASE)/ PAGESIZE; j++) 
-    {
-        TracePrintf(10, "j = %d, pfn = %d, kprot = %d\n", 
-                j, region1PageTable[j].pfn, region1PageTable[j].kprot);
-    }
-    TracePrintf(1, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
+    PageTableSanityCheck(10, 10, idlePCB->pageTable);
     
     // Step 4: Switch on virtual memory
     WriteRegister(REG_VM_ENABLE, 1);
@@ -510,4 +595,25 @@ SetKernelBrk(void *addr)
     }
     TracePrintf(1, "kernel_brk is now %p\n", kernel_brk);
     return 0;
+}
+
+// TODO: change to take trace levels instead of booleans
+void
+PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable)
+{
+    // R0
+        int j;
+        for (j = 0; j < VMEM_0_LIMIT / PAGESIZE; j++) {
+            TracePrintf(r0tl, "j = %d, valid = %d, pfn = %d, kprot = %d, uprot = %d\n",
+                    j, r0PageTable[j].valid, r0PageTable[j].pfn, r0PageTable[j].kprot, r0PageTable[j].uprot);
+        }
+        TracePrintf(r0tl, "PT 0 array size = %d\n", VMEM_0_SIZE / PAGESIZE);
+    
+    // R1
+        for (j = 0; j < (VMEM_1_LIMIT - VMEM_1_BASE) / PAGESIZE; j++) {
+            TracePrintf(r1tl, "j = %d, pfn = %d, kprot = %d\n",
+                    j, region1PageTable[j].pfn, region1PageTable[j].kprot);
+        }
+        TracePrintf(r1tl, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
+    
 }
