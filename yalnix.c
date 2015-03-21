@@ -61,6 +61,31 @@ allocatePage(int vpn, struct pte *pageTable)
 }
 
 void
+freePage(int vpn, struct pte *pageTable)
+{
+    // get the pfn for this vpn
+    int pfn = pageTable[vpn].pfn;
+    
+    // insert the freePage into the list
+    
+    // map the pfn to the topR1PagePointer
+    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = pfn;
+    // flush the TLB for the topR1PagePointer
+    WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) topR1PagePointer);
+    
+    // set the next pointer to the firstFreePage
+    ((FreePage *) topR1PagePointer)->next = firstFreePage;
+    
+    // set firstFreePage to pfn * PAGESIZE
+    firstFreePage = (FreePage *) ((long) pfn * PAGESIZE);
+    
+    // set the pte to invalid
+    pageTable[vpn].valid = 0;
+    
+    availPages++;
+}
+
+void
 initPageTable(PCB *pcb) {
     // invalidate everything on the user's space
     int i;
@@ -170,32 +195,37 @@ YalnixBrk(void *addr)
     // the stack and the heap, and check to make sure there
     // is enough free physical memory
     if (addrVPN > (currentPCB->userStackVPN - 1) || availPages < numPagesNeeded) {
-        TracePrintf(1, "About to return -1 from YalnixBrk\n");
-        TracePrintf(1, "UP_TO_PAGE(addr) = %d\n", UP_TO_PAGE(addr));
-        TracePrintf(1, "(currentPCB->userStackVPN - 1) = %d\n", (currentPCB->userStackVPN - 1));
-        TracePrintf(1, "numPagesNeeded = %d\n", numPagesNeeded);
+        TracePrintf(1, "Invalid call to YalnixBrk with address %p\n", addr);
+        TracePrintf(1, "numPagesNeeded = %d | availPages = %d\n", 
+                numPagesNeeded, availPages);
         return -1;
     }
     
+    int vpnStart = currentPCB->brkVPN + 1;
     if (numPagesNeeded < 0) {
-        //free the pages
+        // free the pages
+        TracePrintf(1, "freeing %d pages in yalnixBrk\n", numPagesNeeded);
+        int vpn;
+        for (vpn = vpnStart; vpn > vpnStart + numPagesNeeded; vpn--) {
+            currentPCB->pageTable[vpn].valid = 0;
+            freePage(vpn, currentPCB->pageTable);
+            WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
+        }
         
     } else {
         //allocate pages
-        TracePrintf(1, "allocating pages in yalnixBrk\n");
-        int vpnStart = currentPCB->brkVPN + 1;
+        TracePrintf(1, "allocating %d pages in yalnixBrk\n", numPagesNeeded);
         int vpn;
         for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
-            TracePrintf(1, "allocating page at vpn=%d\n", vpn);
             currentPCB->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
             currentPCB->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
             currentPCB->pageTable[vpn].valid = 1;
             allocatePage(vpn, currentPCB->pageTable);
-            TracePrintf(1, "currentPCB->pageTable[vpn].pfn = %d\n", currentPCB->pageTable[vpn].pfn);
+            WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
     }
     currentPCB->brkVPN += numPagesNeeded;
-    TracePrintf(1, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
+    TracePrintf(4, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
     
     return 0;
 }
@@ -312,6 +342,7 @@ KernelStart(ExceptionStackFrame *frame,
     // first one, from PMEM_BASE (0) to KERNEL_STACK_BASE
     // this is everything in region 0 except for the kernel stack
     // TODO: is KERNEL_STACK_BASE addressable?
+    // TODO: why does this work again?
     for (page = (FreePage *) PMEM_BASE + MEM_INVALID_SIZE;
          page < (FreePage *) KERNEL_STACK_BASE;
          page += PAGESIZE)
@@ -322,13 +353,15 @@ KernelStart(ExceptionStackFrame *frame,
         availPages++;
     }
     
+    TracePrintf(1, "page %p but page + PAGESIZE %p\n", page, page + PAGESIZE);
+    
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
     // addressable unit of memory
     TracePrintf(5, "Top address = %p\n", PMEM_BASE + pmem_size);
     for (page = (FreePage *) kernel_brk;
          page < ((FreePage *) PMEM_BASE) + pmem_size / sizeof(void *);
-         page += PAGESIZE)
+         page += PAGESIZE / sizeof(void *))
     {
         page->next = firstFreePage;
         TracePrintf(5, "Page %p 's next page is %p\n", page, page->next);
@@ -336,6 +369,7 @@ KernelStart(ExceptionStackFrame *frame,
         availPages++;
     }
     
+    TracePrintf(1, "availPages = %d | pmem_size = %d\n", availPages, pmem_size);
     
     // Step 3: Build page tables for Region 1 and Region 0
     //build R1 page table

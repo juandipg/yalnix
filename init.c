@@ -25,6 +25,18 @@ main(int argc, char **argv)
     TracePrintf(1, "Array allocated from init has 10th element = %d\n", intArr[10]);
     TracePrintf(1, "String allocated from init: %s\n", str1);
     
+    intArr = realloc(intArr, 100000 * sizeof(int));
+    intArr[99999] = 777;
+    
+    TracePrintf(1, "Array allocated from init has 99,999th element = %d\n", intArr[99999]);
+    
+    free(intArr);
+    free(str1);
+    
+    TracePrintf(1, "Invalid access: Array allocated from init has 10th element = %d\n", intArr[10]);
+    TracePrintf(1, "Invalid access: String allocated from init: %s\n", str1);
+    TracePrintf(1, "Invalid access: Array allocated from init has 99,999th element = %d\n", intArr[99999]);
+    
     for (;;) {
         TracePrintf(1, "Init's current pid = %d\n", GetPid());
         Delay(5);
