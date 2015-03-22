@@ -12,6 +12,7 @@ void TrapTtyReceive(ExceptionStackFrame *frame);
 void TrapTtyTransmit(ExceptionStackFrame *frame);
 SavedContext * CloneProcess(SavedContext *ctx, void *p1, void *p2);
 void PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable);
+void * virtualToPhysicalR1(void * virtualAddress);
 
 typedef struct PCB PCB;
 

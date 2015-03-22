@@ -127,7 +127,7 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     initPCB->pid = nextPid++;
     
     // Step 2: switch region 0 page table to new one
-    WriteRegister(REG_PTR0, (RCS421RegVal) &initPCB->pageTable);
+    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(&initPCB->pageTable));
     
     // Step 3: flush TLB
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
@@ -154,7 +154,7 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
     
     pcb1->savedContext = *ctx;
     
-    WriteRegister(REG_PTR0, (RCS421RegVal) &pcb2->pageTable);
+    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(&pcb2->pageTable));
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
@@ -299,7 +299,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // switch to region 0 page table of new process and flush TLB
-    WriteRegister(REG_PTR0, (RCS421RegVal) childPCB->pageTable);
+    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(childPCB->pageTable));
     
     PageTableSanityCheck(1, 10, childPCB->pageTable);
     
@@ -435,7 +435,7 @@ KernelStart(ExceptionStackFrame *frame,
     region1PageTable = malloc(PAGE_TABLE_SIZE);
     
     
-    //WARNING: do not make any malloc calls past this
+    //WARNING: do not make any malloc calls past this 
     //point until virtual memory is enabled
     // Step 2: Build list of available page tables
     FreePage * page;
@@ -615,5 +615,16 @@ PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable)
                     j, region1PageTable[j].pfn, region1PageTable[j].kprot);
         }
         TracePrintf(r1tl, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
-    
+}
+
+void *
+virtualToPhysicalR1(void * virtualAddress)
+{
+    int vpn = DOWN_TO_PAGE(virtualAddress - VMEM_1_BASE) / PAGESIZE;
+    int pfn = region1PageTable[vpn].pfn;
+    void *physAddr = (void *) ((pfn * PAGESIZE) | ((long)virtualAddress & PAGEOFFSET));
+    TracePrintf(1, "vpn: %d, pfn: %d\n", vpn, pfn);
+    TracePrintf(1, "page-aligned phys addr: %p\n", (void *) (long) (pfn * PAGESIZE));
+    TracePrintf(1, "virtual addr: %p, physical addr: %p\n", virtualAddress, physAddr);
+    return physAddr;
 }
