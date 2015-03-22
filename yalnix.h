@@ -2,7 +2,9 @@
 #include <stdbool.h>
 
 // yalnix.c
-void allocatePage(int vpn, struct pte *pageTable);
+int allocatePage();
+void freePage(int pfn);
+void freeVirtualPage(int vpn, struct pte *pageTable);
 void TrapKernel(ExceptionStackFrame *frame);
 void TrapClock(ExceptionStackFrame *frame);
 void TrapIllegal(ExceptionStackFrame *frame);
@@ -18,7 +20,7 @@ typedef struct PCB PCB;
 
 struct PCB {
     int pid;
-    struct pte pageTable[PAGE_TABLE_LEN];
+    struct pte *pageTable;
     SavedContext savedContext;
     PCB *nextProc;
     PCB *prevProc;
@@ -29,6 +31,13 @@ struct PCB {
 typedef struct FreePage FreePage;
 struct FreePage {
     FreePage *next;
+};
+
+typedef struct PTFreePage PTFreePage;
+struct PTFreePage {
+    bool isFull;
+    PTFreePage *next;
+    PTFreePage *prev;
 };
 
 // load.c

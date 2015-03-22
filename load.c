@@ -188,7 +188,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
     
 //    int i;
 //    for (i = 0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-//        region0PageTable[i].valid = 0;
+//        freeVirtualPage(i, pcb->pageTable);
 //    }
 
     /*
@@ -219,7 +219,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_EXEC;
-         allocatePage(vpn, pcb->pageTable);
+         pcb->pageTable[vpn].pfn = allocatePage();
      }
     /* Then the data and bss pages */
 //    >>>> For the next data_bss_npg number of PTEs in the Region 0
@@ -232,7 +232,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, pcb->pageTable);
+         pcb->pageTable[vpn].pfn = allocatePage();
      }
     
     /* And finally the user stack pages */
@@ -250,9 +250,10 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
          pcb->pageTable[vpn].valid = 1;
          pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
          pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         allocatePage(vpn, pcb->pageTable);
+         pcb->pageTable[vpn].pfn = allocatePage();
      }
     
+    //TracePrintf(1, "done adding all user stack pages\n");
     pcb->brkVPN = data_bss_npg + text_npg + MEM_INVALID_PAGES - 1;
     pcb->userStackVPN = vpn + 1;
 

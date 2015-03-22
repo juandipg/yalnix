@@ -13,6 +13,7 @@ struct pte *region1PageTable;
 // linked list of free pages
 int availPages = 0;
 struct FreePage * firstFreePage = NULL;
+struct PTFreePage * firstHalfPage = NULL;
 
 PCB *initPCB;
 PCB *idlePCB;
@@ -25,6 +26,8 @@ PCB *lastReadyPCB;
 PCB *firstBlockedPCB;
 PCB *lastBlockedPCB;
 
+PCB *sparePCB;
+
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
@@ -34,49 +37,47 @@ void *kernel_brk;
 int global_pmem_size;
 
 void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
+void *currentR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (2*PAGESIZE);
+void *otherR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (3*PAGESIZE);
+
+struct pte *topR1PTE;
+struct pte *currentR0PageTablePTE;
+struct pte *otherR0PageTablePTE;
 
 /*
  * Expects:
- *  A valid vpn to which the new physical page should be
- *  mapped. The pointer to the pageTable that this vpn
- *  belongs to.
+ *  Nothing
  *
  * Returns:
- *  Nothing
+ *  The PFN of the newly allocated page
  */
-void
-allocatePage(int vpn, struct pte *pageTable)
+int
+allocatePage()
 {
     // Map the provided virtual page to a free physical page
     int newPFN = (long) firstFreePage / PAGESIZE;
-    pageTable[vpn].pfn = newPFN;
     
     // Use the ad-hoc virtual page to recover the pointer
     // to the next free page from physical memory
     // TODO: derive vpn from pointer
-    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = newPFN;
+    topR1PTE->pfn = newPFN;
     FreePage *p  = (FreePage *)topR1PagePointer;
-    TracePrintf(3, "p address = %p\n", p);
-    TracePrintf(3, "Page table entry pfn: %d\n", pageTable[vpn].pfn);
 
     // Clear TLB for this page
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) p);
     // Now save that pointer, shortening the list by 1
-    TracePrintf(3, "page p->next = %p\n", p->next);
     firstFreePage = p->next;
     availPages--;
+    return newPFN;
 }
 
 void
-freePage(int vpn, struct pte *pageTable)
+freePage(int pfn)
 {
-    // get the pfn for this vpn
-    int pfn = pageTable[vpn].pfn;
-    
     // insert the freePage into the list
     
     // map the pfn to the topR1PagePointer
-    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = pfn;
+    topR1PTE->pfn = pfn;
     // flush the TLB for the topR1PagePointer
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) topR1PagePointer);
     
@@ -86,10 +87,46 @@ freePage(int vpn, struct pte *pageTable)
     // set firstFreePage to pfn * PAGESIZE
     firstFreePage = (FreePage *) ((long) pfn * PAGESIZE);
     
-    // set the pte to invalid
-    pageTable[vpn].valid = 0;
-    
     availPages++;
+}
+
+void
+freeVirtualPage(int vpn, struct pte *pageTable)
+{
+    freePage(pageTable[vpn].pfn);
+    pageTable[vpn].valid = 0;
+}
+
+
+/**
+ Returns the physical address of the new page
+ table. This physical address is mapped to a virtual
+ page VPN in R1 page table
+ */
+struct pte *
+allocatePTMemory()
+{
+    void *physicalAddr;
+    if (firstHalfPage == NULL) {
+        // allocate a new page of physical memory, get the physical address
+        int pfn = allocatePage();
+        physicalAddr = (void *) ((long)pfn * PAGESIZE);
+        
+        topR1PTE->pfn = pfn;
+        WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) topR1PagePointer);
+        PTFreePage *topHalf  = (PTFreePage *)topR1PagePointer + PAGE_TABLE_SIZE;
+        
+        // update the list of half pages with the other half of the page
+        // we just allocated
+        topHalf->isFull = false;
+        topHalf->next = NULL;
+        topHalf->prev = NULL;
+        firstHalfPage = physicalAddr + PAGE_TABLE_SIZE;
+    } else {
+        // TODO finish implementing
+        physicalAddr = firstHalfPage;
+    }
+    return physicalAddr;
 }
 
 void
@@ -102,7 +139,7 @@ initPageTable(PCB *pcb) {
     
     // initialize kernel stack area
     for (; i < (long) VMEM_0_LIMIT / PAGESIZE; i++) {
-        allocatePage(i, pcb->pageTable);
+        pcb->pageTable[i].pfn = allocatePage();
         pcb->pageTable[i].uprot = 0;
         pcb->pageTable[i].kprot = PROT_READ | PROT_WRITE;
         pcb->pageTable[i].valid = 1;
@@ -119,7 +156,7 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     int vpn = KERNEL_STACK_BASE / PAGESIZE;
     for (; vpn < KERNEL_STACK_LIMIT / PAGESIZE; vpn++) {
         void *r0Pointer = (void *) (VMEM_0_BASE + (long)(vpn * PAGESIZE));
-        region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = initPCB->pageTable[vpn].pfn;
+        topR1PTE->pfn = initPCB->pageTable[vpn].pfn;
         WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
         memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
     }
@@ -127,9 +164,10 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     initPCB->pid = nextPid++;
     
     // Step 2: switch region 0 page table to new one
-    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(&initPCB->pageTable));
+    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(initPCB->pageTable));
     
     // Step 3: flush TLB
+    TracePrintf(1, "About to flush TLB in startInit\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // Step 4: call LoadProgram(init)
@@ -154,7 +192,7 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
     
     pcb1->savedContext = *ctx;
     
-    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(&pcb2->pageTable));
+    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(pcb2->pageTable));
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
@@ -214,8 +252,7 @@ YalnixBrk(void *addr)
         TracePrintf(1, "freeing %d pages in yalnixBrk\n", numPagesNeeded);
         int vpn;
         for (vpn = vpnStart; vpn > vpnStart + numPagesNeeded; vpn--) {
-            currentPCB->pageTable[vpn].valid = 0;
-            freePage(vpn, currentPCB->pageTable);
+            freeVirtualPage(vpn, currentPCB->pageTable);
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
         
@@ -227,7 +264,7 @@ YalnixBrk(void *addr)
             currentPCB->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
             currentPCB->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
             currentPCB->pageTable[vpn].valid = 1;
-            allocatePage(vpn, currentPCB->pageTable);
+            currentPCB->pageTable[vpn].pfn = allocatePage();
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
     }
@@ -243,14 +280,19 @@ YalnixFork(ExceptionStackFrame *frame)
     TracePrintf(1, "yalnixfork\n");
     
     // create a new PCB for the new process
-    PCB *childPCB = malloc(sizeof (PCB));
+    PCB *childPCB = sparePCB;
     
     TracePrintf(1, "storing child pcb at %p\n", childPCB);
     
     TracePrintf(1, "allocated space for child pcb\n");
     
     // clone the current PCB
-    *childPCB = *currentPCB;
+    //*childPCB = *currentPCB;
+    
+    // allocate space for the child's page table
+    childPCB->savedContext = currentPCB->savedContext;
+    childPCB->brkVPN = currentPCB->brkVPN;
+    childPCB->userStackVPN = currentPCB->userStackVPN;
     
     // assign it a new pid
     childPCB->pid = nextPid++;
@@ -281,15 +323,20 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
         TracePrintf(1, "not enough memory to fork. required pages = %d, "
                 "available pages = %d \n", reqdPageCount, availPages);
         frame->regs[0] = ERROR;
+        // TODO: free the memory being used by childPCB, and the page table
+        
         return ctx;
     }
     
     // copy the program into new physical pages
     for (vpn = 0; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
+        childPCB->pageTable[vpn].valid = currentPCB->pageTable[vpn].valid;
         if (childPCB->pageTable[vpn].valid == 1) {
-            allocatePage(vpn, childPCB->pageTable);
+            childPCB->pageTable[vpn].pfn = allocatePage();
+            childPCB->pageTable[vpn].kprot = currentPCB->pageTable[vpn].kprot;
+            childPCB->pageTable[vpn].uprot = currentPCB->pageTable[vpn].uprot;
             void *r0Pointer = (void *) (VMEM_0_BASE + (long)(vpn * PAGESIZE));
-            region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].pfn = childPCB->pageTable[vpn].pfn;
+            topR1PTE->pfn = childPCB->pageTable[vpn].pfn;
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
             memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
         }
@@ -301,7 +348,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     // switch to region 0 page table of new process and flush TLB
     WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(childPCB->pageTable));
     
-    PageTableSanityCheck(1, 10, childPCB->pageTable);
+    PageTableSanityCheck(10, 10, childPCB->pageTable);
     
     TracePrintf(1, "child pcb r0 page table is at %p\n", childPCB->pageTable);
     TracePrintf(1, "flushing r0 tlb now\n");
@@ -430,9 +477,24 @@ KernelStart(ExceptionStackFrame *frame,
     TracePrintf(0, "Saved addr of ivt to REG_VECTOR_BASE register\n");
     
     idlePCB = malloc(sizeof(PCB));
+    idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
+    
+    initPCB = malloc(sizeof(PCB));
+    initPCB->pageTable = malloc(PAGE_TABLE_SIZE);
+    
+    sparePCB = malloc(sizeof(PCB));
+    sparePCB->pageTable = malloc(PAGE_TABLE_SIZE);
+    
+    TracePrintf(1, "Address of sparePCB after amlloc: %p\n", sparePCB);
     TracePrintf(1, "Address of idlePCB after malloc: %p\n", idlePCB);
 
     region1PageTable = malloc(PAGE_TABLE_SIZE);
+    
+    topR1PTE = &region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1];
+    currentR0PageTablePTE = &region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 2];
+    otherR0PageTablePTE = &region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 3];
+    
+    TracePrintf(1, "Done assigning topR1PTE, etc\n");
     
     
     //WARNING: do not make any malloc calls past this 
@@ -487,6 +549,7 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
+    TracePrintf(1, "adding PTEs for kernel data/bss/heap\n");
     //Add PTEs for kernel data/bss/heap
     for (; vpn < (long) (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE)/ PAGESIZE; vpn++) {
         TracePrintf(4, "vpn = %d, pfn = %d\n", vpn, pfn);
@@ -497,15 +560,17 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
+    TracePrintf(1, "adding invalid ptes\n");
     //Add invalid PTEs for the rest of memory in R1
     for (; vpn < VMEM_1_SIZE / PAGESIZE; vpn++) {
         region1PageTable[vpn].valid = 0;
         pfn++;
     }
     
+    TracePrintf(1, "initializing ad-hoc page in R1\n");
     //Initialize the ad-hoc page in R1 to PROT_READ | PROT_WRITE
-    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].valid = 1;
-    region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1].kprot = PROT_WRITE | PROT_READ;
+    topR1PTE->valid = 1;
+    topR1PTE->kprot = PROT_WRITE | PROT_READ;
     
     // build R0 page table for idle process
     // TODO: consider moving this to a function
@@ -513,6 +578,7 @@ KernelStart(ExceptionStackFrame *frame,
     // the pfn is allocated for new processes
     // but not for this special case
     // (here we have to make them the same as virtual pages)
+    TracePrintf(1, "building r0 page table now\n");
     pfn = VMEM_0_BASE / PAGESIZE;
     for (vpn = 0; vpn < KERNEL_STACK_BASE / PAGESIZE; vpn++) {
         idlePCB->pageTable[vpn].valid = 0;
@@ -529,19 +595,23 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     // tell hardware where the page tables are
-    WriteRegister(REG_PTR0, (RCS421RegVal) &idlePCB->pageTable);
+    TracePrintf(1, "telling HW where the two page tables are\n");
+    WriteRegister(REG_PTR0, (RCS421RegVal) idlePCB->pageTable);
     WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
-    PageTableSanityCheck(10, 10, idlePCB->pageTable);
+    PageTableSanityCheck(1, 1, idlePCB->pageTable);
     
     // Step 4: Switch on virtual memory
+    TracePrintf(1, "enabling virtual memory\n");
     WriteRegister(REG_VM_ENABLE, 1);
     virtualMemoryEnabled = 1;
     
     //allocate space for init PCB's
-    initPCB = malloc(sizeof(PCB));
+    // TODO: fix this so it doesn't cause issues
+    //initPCB = malloc(sizeof(PCB));
     
     // Step 5: load idle program
+    TracePrintf(1, "Loading idle program\n");
     char * args[2];
     char *name = "idle";
     args[0] = name;
@@ -589,7 +659,7 @@ SetKernelBrk(void *addr)
             region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
             region1PageTable[vpn].uprot = 0;
             region1PageTable[vpn].valid = 1;
-            allocatePage(vpn, region1PageTable);
+            region1PageTable[vpn].pfn = allocatePage();
         }
         kernel_brk = addr;
     }
