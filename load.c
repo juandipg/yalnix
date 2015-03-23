@@ -35,7 +35,8 @@
  *  in this case.
  */
 int
-LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
+LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb, 
+        struct pte * pageTable)
 {
     int fd;
     int status;
@@ -188,7 +189,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
     
 //    int i;
 //    for (i = 0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-//        freeVirtualPage(i, pcb->pageTable);
+//        freeVirtualPage(i, pageTable);
 //    }
 
     /*
@@ -216,10 +217,10 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
 //    >>>>     uprot = PROT_READ | PROT_EXEC
 //    >>>>     pfn   = a new page of physical memory
      for (; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
-         pcb->pageTable[vpn].valid = 1;
-         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         pcb->pageTable[vpn].uprot = PROT_READ | PROT_EXEC;
-         pcb->pageTable[vpn].pfn = allocatePage();
+         pageTable[vpn].valid = 1;
+         pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pageTable[vpn].uprot = PROT_READ | PROT_EXEC;
+         pageTable[vpn].pfn = allocatePage();
      }
     /* Then the data and bss pages */
 //    >>>> For the next data_bss_npg number of PTEs in the Region 0
@@ -229,10 +230,10 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
 //    >>>>     uprot = PROT_READ | PROT_WRITE
 //    >>>>     pfn   = a new page of physical memory
      for (; vpn < data_bss_npg + text_npg + MEM_INVALID_PAGES; vpn++) {
-         pcb->pageTable[vpn].valid = 1;
-         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         pcb->pageTable[vpn].pfn = allocatePage();
+         pageTable[vpn].valid = 1;
+         pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+         pageTable[vpn].pfn = allocatePage();
      }
     
     /* And finally the user stack pages */
@@ -247,10 +248,10 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
      for (vpn = (USER_STACK_LIMIT / PAGESIZE) - 1; vpn > ((USER_STACK_LIMIT / PAGESIZE) - 1) - stack_npg; vpn--)
      {
          TracePrintf(1, "user stack vpn = %d\n", vpn);
-         pcb->pageTable[vpn].valid = 1;
-         pcb->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-         pcb->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-         pcb->pageTable[vpn].pfn = allocatePage();
+         pageTable[vpn].valid = 1;
+         pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+         pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+         pageTable[vpn].pfn = allocatePage();
      }
     
     //TracePrintf(1, "done adding all user stack pages\n");
@@ -292,7 +293,7 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb)
 //    >>>> pages, set each PTE's kprot to PROT_READ | PROT_EXEC.
 
     for (vpn = MEM_INVALID_PAGES; vpn < text_npg + MEM_INVALID_PAGES; vpn++) {
-         pcb->pageTable[vpn].kprot = PROT_READ | PROT_EXEC;
+         pageTable[vpn].kprot = PROT_READ | PROT_EXEC;
      }
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);

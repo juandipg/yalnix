@@ -42,4 +42,5 @@ struct PTFreePage {
 };
 
 // load.c
-int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb);
+int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb, 
+        struct pte * pageTable);
