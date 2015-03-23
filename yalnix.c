@@ -193,9 +193,6 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
-    // add pcb1 back onto ready queue
-    addProcessToEndOfQueue(pcb1, readyQueue);
-    
     currentPCB = pcb2;
     return &pcb2->savedContext; //return idle's context, which will run right after
 }
@@ -213,6 +210,8 @@ YalnixDelay(int clock_ticks)
         return 0;
     }
     currentProcClockTicks = 0;
+    // add pcb1 back onto ready queue
+    addProcessToEndOfQueue(initPCB, readyQueue);
     ContextSwitch(yalnixContextSwitch, &initPCB->savedContext, initPCB, idlePCB);
     return 0;
 }
@@ -259,17 +258,18 @@ YalnixBrk(void *addr)
     } else {
         //allocate pages
         TracePrintf(1, "allocating %d pages in yalnixBrk\n", numPagesNeeded);
+        struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
         int vpn;
         for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
-            currentPCB->pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
-            currentPCB->pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
-            currentPCB->pageTable[vpn].valid = 1;
-            currentPCB->pageTable[vpn].pfn = allocatePage();
+            pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+            pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+            pageTable[vpn].valid = 1;
+            pageTable[vpn].pfn = allocatePage();
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
     }
     currentPCB->brkVPN += numPagesNeeded;
-    TracePrintf(4, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
+    TracePrintf(1, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
     
     return 0;
 }
@@ -405,6 +405,9 @@ PCB *
 removePCBFromFrontOfQueue(Queue *queue)
 {
     PCB *firstPCB = queue->firstPCB;
+    if (firstPCB == NULL) {
+        return NULL;
+    }
     if (queue->firstPCB->nextProc == NULL) {
         queue->lastPCB = NULL;
     }
@@ -439,12 +442,21 @@ TrapClock(ExceptionStackFrame *frame)
     TracePrintf(0, "trapclock\n");
     //Get the next process to switch to, and if it's not null, switch to it
     PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+    
     if (nextReadyProc != NULL) {
         TracePrintf(0, "Going to context switch to process %d \n", nextReadyProc->pid);
+        // add pcb1 back onto ready queue
+        addProcessToEndOfQueue(currentPCB, readyQueue);
         ContextSwitch(
                 yalnixContextSwitch, 
                 &currentPCB->savedContext, 
                 currentPCB, nextReadyProc);
+    } else {
+        // Else, do nothing ?
+//        ContextSwitch(
+//                yalnixContextSwitch, 
+//                &currentPCB->savedContext, 
+//                currentPCB, idlePCB);
     }
     // TODO: generalize trapclock and remove return
     return;
@@ -466,10 +478,45 @@ TrapIllegal(ExceptionStackFrame *frame)
 void
 TrapMemory(ExceptionStackFrame *frame)
 {
-    (void) frame;
     TracePrintf(0, "trapmemory\n");
     TracePrintf(1, "Address causing trapmem = %p\n", frame->addr);
-    Halt();
+    void *addr = frame->addr;
+    
+    int addrVPN = DOWN_TO_PAGE(addr) / PAGESIZE;
+    
+    // Calculate the number of pages needed
+    int numPagesNeeded = currentPCB->userStackVPN - addrVPN;
+    
+    // if addr is in region 0, is below the currently allocated memory
+    // for the stack, and above the current break for the currently 
+    // executing process, grow the user stack by enough pages
+    if (((long)addr < VMEM_0_LIMIT) && 
+            (addrVPN < currentPCB->userStackVPN) &&
+            (addrVPN > currentPCB->brkVPN - 1)) {
+        
+        struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
+        int vpnStart = currentPCB->userStackVPN - numPagesNeeded;
+        int vpn;
+        for (vpn = vpnStart; vpn < currentPCB->userStackVPN; vpn++) {
+            pageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+            pageTable[vpn].uprot = PROT_READ | PROT_WRITE;
+            pageTable[vpn].valid = 1;
+            pageTable[vpn].pfn = allocatePage();
+            WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
+        }
+        currentPCB->userStackVPN -= numPagesNeeded;
+    }
+    
+    // else, terminate the currently running process, and context switch
+    // to next process
+    else {
+        PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+        if (nextReadyProc == NULL) {
+            nextReadyProc = idlePCB;
+        }
+        // TODO: Print an error message with the pid and an explanation
+        ContextSwitch (yalnixContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
+    }
 }
 
 void
@@ -653,7 +700,11 @@ KernelStart(ExceptionStackFrame *frame,
     
     //allocate process queues
     readyQueue = malloc(sizeof(Queue));
+    readyQueue->firstPCB = NULL;
+    readyQueue->lastPCB = NULL;
     blockedQueue = malloc(sizeof(Queue));
+    blockedQueue->firstPCB = NULL;
+    blockedQueue->lastPCB = NULL;
     
     // Step 5: load idle program
     TracePrintf(1, "Loading idle program\n");
