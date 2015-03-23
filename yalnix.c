@@ -7,7 +7,6 @@
 #include "yalnix.h"
 
 void * vector_table[TRAP_VECTOR_SIZE];
-//struct pte region1PageTable[VMEM_1_SIZE / PAGESIZE];
 struct pte *region1PageTable;
 
 // linked list of free pages
@@ -15,14 +14,14 @@ int availPages = 0;
 struct FreePage * firstFreePage = NULL;
 struct PTFreePage * firstHalfPage = NULL;
 
+// process maintenance
 PCB *initPCB;
 PCB *idlePCB;
-
 PCB *currentPCB;
-
+// ready queue
 PCB *firstReadyPCB;
 PCB *lastReadyPCB;
-
+//blocked queue
 PCB *firstBlockedPCB;
 PCB *lastBlockedPCB;
 
@@ -34,11 +33,13 @@ bool virtualMemoryEnabled = false;
 void *kernel_brk;
 int global_pmem_size;
 
+// add-hoc PTE and virtual pointer for referencing out of context phys mem
+struct pte *topR1PTE;
 void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
+
+// ad-hoc virtual pointers for referencing page tables
 void *currentR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (2*PAGESIZE);
 void *otherR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (3*PAGESIZE);
-
-struct pte *topR1PTE;
 
 /*
  * Expects:
@@ -55,7 +56,6 @@ allocatePage()
     
     // Use the ad-hoc virtual page to recover the pointer
     // to the next free page from physical memory
-    // TODO: derive vpn from pointer
     topR1PTE->pfn = newPFN;
     FreePage *p  = (FreePage *)topR1PagePointer;
 
@@ -71,7 +71,6 @@ void
 freePage(int pfn)
 {
     // insert the freePage into the list
-    
     // map the pfn to the topR1PagePointer
     topR1PTE->pfn = pfn;
     // flush the TLB for the topR1PagePointer
@@ -104,6 +103,7 @@ allocatePTMemory()
 {
     void *physicalAddr;
     if (firstHalfPage == NULL) {
+        // free half page list is empty
         // allocate a new page of physical memory, get the physical address
         int pfn = allocatePage();
         TracePrintf(1, "pfn inside allocatePTMemory = %d\n", pfn);
