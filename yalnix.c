@@ -120,9 +120,10 @@ allocatePTMemory()
         topHalf->prev = NULL;
         firstHalfPage = physicalAddr + PAGE_TABLE_SIZE;
     } else {
-        // TODO finish implementing
-        
         physicalAddr = firstHalfPage;
+        // get the virtual address corresponding to that physical address
+        struct PTFreePage *freeHalfPage = (PTFreePage *)getVirtualAddress(physicalAddr, otherR0PageTableVirtualPointer);
+        firstHalfPage = freeHalfPage->next; 
     }
     return physicalAddr;
 }

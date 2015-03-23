@@ -6,6 +6,7 @@
 char *str1;
 int *intArr;
 int pid;
+int pid2;
 
 int
 main(int argc, char **argv)
@@ -16,6 +17,10 @@ main(int argc, char **argv)
     pid = Fork();
     if (pid == 0) {
         TracePrintf(1, "I'm a real process! (child)\n");
+        pid2 = Fork();
+        if (pid2 == 0) {
+            TracePrintf(1, "I'm a child of a child!!!");
+        }
     } else if (pid == -1) {
         TracePrintf(1, "yalnix refused my child-making\n");
     } else {
