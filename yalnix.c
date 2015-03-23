@@ -439,9 +439,8 @@ TrapClock(ExceptionStackFrame *frame)
     TracePrintf(0, "trapclock\n");
     //Get the next process to switch to, and if it's not null, switch to it
     PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
-    TracePrintf(0, "Next PCB pid is %d \n", nextReadyProc->pid);
     if (nextReadyProc != NULL) {
-        TracePrintf(0, "Going to context switch to other proc! \n");
+        TracePrintf(0, "Going to context switch to process %d \n", nextReadyProc->pid);
         ContextSwitch(
                 yalnixContextSwitch, 
                 &currentPCB->savedContext, 
