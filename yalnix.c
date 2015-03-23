@@ -26,8 +26,6 @@ PCB *lastReadyPCB;
 PCB *firstBlockedPCB;
 PCB *lastBlockedPCB;
 
-PCB *sparePCB;
-
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
@@ -110,11 +108,12 @@ allocatePTMemory()
     if (firstHalfPage == NULL) {
         // allocate a new page of physical memory, get the physical address
         int pfn = allocatePage();
+        TracePrintf(1, "pfn inside allocatePTMemory = %d\n", pfn);
         physicalAddr = (void *) ((long)pfn * PAGESIZE);
         
         topR1PTE->pfn = pfn;
         WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) topR1PagePointer);
-        PTFreePage *topHalf  = (PTFreePage *)topR1PagePointer + PAGE_TABLE_SIZE;
+        PTFreePage *topHalf  = (PTFreePage *)((char *)topR1PagePointer + (PAGESIZE / 2));
         
         // update the list of half pages with the other half of the page
         // we just allocated
@@ -124,6 +123,7 @@ allocatePTMemory()
         firstHalfPage = physicalAddr + PAGE_TABLE_SIZE;
     } else {
         // TODO finish implementing
+        
         physicalAddr = firstHalfPage;
     }
     return physicalAddr;
@@ -160,6 +160,8 @@ startInit(SavedContext *ctx, void *frame, void *p2)
         WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
         memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
     }
+    
+    PageTableSanityCheck(10, 10, initPCB->pageTable);
     
     initPCB->pid = nextPid++;
     
@@ -280,14 +282,16 @@ YalnixFork(ExceptionStackFrame *frame)
     TracePrintf(1, "yalnixfork\n");
     
     // create a new PCB for the new process
-    PCB *childPCB = sparePCB;
+    PCB *childPCB = malloc(sizeof(PCB));
+    
+    childPCB->pageTable = allocatePTMemory();
+    
     
     TracePrintf(1, "storing child pcb at %p\n", childPCB);
+    TracePrintf(1, "storing child pt at %p\n", childPCB->pageTable);
     
     TracePrintf(1, "allocated space for child pcb\n");
     
-    // clone the current PCB
-    //*childPCB = *currentPCB;
     
     // allocate space for the child's page table
     childPCB->savedContext = currentPCB->savedContext;
@@ -301,14 +305,29 @@ YalnixFork(ExceptionStackFrame *frame)
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
 }
 
+struct pte *
+getVirtualAddress(void *physicalAddr, void *pageVirtualAddr)
+{
+    int vpn = (long) (pageVirtualAddr - VMEM_1_BASE) / PAGESIZE;
+    TracePrintf(1, "vpn inside getVirtualAddress = %d\n", vpn);
+    region1PageTable[vpn].valid = 1;
+    region1PageTable[vpn].pfn = DOWN_TO_PAGE(physicalAddr) / PAGESIZE;
+    region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
+    region1PageTable[vpn].uprot = 0;
+    WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)pageVirtualAddr);
+    
+    TracePrintf(1, "about to return virtual address: %p\n", (void *)(((char*)pageVirtualAddr + ((long) physicalAddr & PAGEOFFSET))));
+    TracePrintf(1, "page offset = %d\n", (long) physicalAddr & PAGEOFFSET);
+    return (struct pte *) (((char*)pageVirtualAddr + ((long) physicalAddr & PAGEOFFSET)));
+}
+
 SavedContext *
 CloneProcess(SavedContext *ctx, void *p1, void *p2)
 {
-    TracePrintf(1, "clone start, flushing to see what happens\n");
-    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
-    
     PCB *childPCB = (PCB *) p1;
     ExceptionStackFrame *frame = (ExceptionStackFrame *) p2;
+    struct pte *childPageTable = getVirtualAddress(childPCB->pageTable, otherR0PageTableVirtualPointer);
+    struct pte *currentPageTable = currentPCB->pageTable; //getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
     
     // return value for the parent
     frame->regs[0] = childPCB->pid;
@@ -317,7 +336,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     int reqdPageCount = 0;
     int vpn;
     for (vpn = MEM_INVALID_PAGES; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
-        reqdPageCount += currentPCB->pageTable[vpn].valid;
+        reqdPageCount += currentPageTable[vpn].valid;
     }
     if (reqdPageCount > availPages) {
         TracePrintf(1, "not enough memory to fork. required pages = %d, "
@@ -330,13 +349,13 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     
     // copy the program into new physical pages
     for (vpn = 0; vpn < VMEM_0_LIMIT / PAGESIZE; vpn++) {
-        childPCB->pageTable[vpn].valid = currentPCB->pageTable[vpn].valid;
-        if (childPCB->pageTable[vpn].valid == 1) {
-            childPCB->pageTable[vpn].pfn = allocatePage();
-            childPCB->pageTable[vpn].kprot = currentPCB->pageTable[vpn].kprot;
-            childPCB->pageTable[vpn].uprot = currentPCB->pageTable[vpn].uprot;
+        childPageTable[vpn].valid = currentPageTable[vpn].valid;
+        if (childPageTable[vpn].valid == 1) {
+            childPageTable[vpn].pfn = allocatePage();
+            childPageTable[vpn].kprot = currentPageTable[vpn].kprot;
+            childPageTable[vpn].uprot = currentPageTable[vpn].uprot;
             void *r0Pointer = (void *) (VMEM_0_BASE + (long)(vpn * PAGESIZE));
-            topR1PTE->pfn = childPCB->pageTable[vpn].pfn;
+            topR1PTE->pfn = childPageTable[vpn].pfn;
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)topR1PagePointer);
             memcpy(topR1PagePointer, r0Pointer, PAGESIZE);
         }
@@ -346,11 +365,11 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // switch to region 0 page table of new process and flush TLB
-    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(childPCB->pageTable));
+    WriteRegister(REG_PTR0, (RCS421RegVal) childPCB->pageTable);
     
-    PageTableSanityCheck(10, 10, childPCB->pageTable);
+    PageTableSanityCheck(10, 10, currentPageTable);
     
-    TracePrintf(1, "child pcb r0 page table is at %p\n", childPCB->pageTable);
+    TracePrintf(1, "child pcb r0 page table is at %p\n", childPageTable);
     TracePrintf(1, "flushing r0 tlb now\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
@@ -480,12 +499,8 @@ KernelStart(ExceptionStackFrame *frame,
     idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
     
     initPCB = malloc(sizeof(PCB));
-    initPCB->pageTable = malloc(PAGE_TABLE_SIZE);
+    initPCB->pageTable =  malloc(PAGE_TABLE_SIZE);
     
-    sparePCB = malloc(sizeof(PCB));
-    sparePCB->pageTable = malloc(PAGE_TABLE_SIZE);
-    
-    TracePrintf(1, "Address of sparePCB after amlloc: %p\n", sparePCB);
     TracePrintf(1, "Address of idlePCB after malloc: %p\n", idlePCB);
 
     region1PageTable = malloc(PAGE_TABLE_SIZE);
@@ -599,7 +614,7 @@ KernelStart(ExceptionStackFrame *frame,
     WriteRegister(REG_PTR0, (RCS421RegVal) idlePCB->pageTable);
     WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
-    PageTableSanityCheck(1, 1, idlePCB->pageTable);
+    PageTableSanityCheck(10, 10, idlePCB->pageTable);
     
     // Step 4: Switch on virtual memory
     TracePrintf(1, "enabling virtual memory\n");
@@ -607,8 +622,7 @@ KernelStart(ExceptionStackFrame *frame,
     virtualMemoryEnabled = 1;
     
     //allocate space for init PCB's
-    // TODO: fix this so it doesn't cause issues
-    //initPCB = malloc(sizeof(PCB));
+    
     
     // Step 5: load idle program
     TracePrintf(1, "Loading idle program\n");
@@ -656,6 +670,7 @@ SetKernelBrk(void *addr)
         int vpnStart = (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE) / PAGESIZE;
         int vpn;
         for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
+            TracePrintf(1, "allocating page in R1 for vpn = %d\n", vpn);
             region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
             region1PageTable[vpn].uprot = 0;
             region1PageTable[vpn].valid = 1;
