@@ -19,11 +19,9 @@ PCB *initPCB;
 PCB *idlePCB;
 PCB *currentPCB;
 // ready queue
-PCB *firstReadyPCB;
-PCB *lastReadyPCB;
+Queue *readyQueue;
 //blocked queue
-PCB *firstBlockedPCB;
-PCB *lastBlockedPCB;
+Queue *blockedQueue;
 
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
@@ -123,7 +121,7 @@ allocatePTMemory()
         physicalAddr = firstHalfPage;
         // get the virtual address corresponding to that physical address
         struct PTFreePage *freeHalfPage = (PTFreePage *)getVirtualAddress(physicalAddr, otherR0PageTableVirtualPointer);
-        firstHalfPage = freeHalfPage->next; 
+        firstHalfPage = freeHalfPage->next;
     }
     return physicalAddr;
 }
@@ -191,9 +189,12 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
     
     pcb1->savedContext = *ctx;
     
-    WriteRegister(REG_PTR0, (RCS421RegVal) virtualToPhysicalR1(pcb2->pageTable));
+    WriteRegister(REG_PTR0, (RCS421RegVal)pcb2->pageTable);
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    // add pcb1 back onto ready queue
+    addProcessToEndOfQueue(pcb1, readyQueue);
     
     currentPCB = pcb2;
     return &pcb2->savedContext; //return idle's context, which will run right after
@@ -374,11 +375,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     frame->regs[0] = 0;
     
     // move parent to ready queue
-    // TODO?
-//    currentPCB->nextProc = firstReadyPCB;
-//    currentPCB->prevProc = NULL;
-//    firstReadyPCB = currentPCB;
-//    lastReadyPCB = currentPCB;
+    addProcessToEndOfQueue(currentPCB, readyQueue);
     
     // set current process to child
     currentPCB = childPCB;
@@ -387,6 +384,32 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     
     // return;
     return ctx;
+}
+
+void
+addProcessToEndOfQueue(PCB *pcb, Queue *queue)
+{
+    // if the queue is empty
+    if (queue->firstPCB == NULL) {
+        pcb->nextProc = NULL;
+        queue->lastPCB = pcb;
+        queue->firstPCB = pcb;
+    } else {    // if the queue is nonempty
+        queue->lastPCB->nextProc = pcb;
+        queue->lastPCB = pcb;
+        queue->lastPCB->nextProc = NULL;
+    }
+}
+
+PCB *
+removePCBFromFrontOfQueue(Queue *queue)
+{
+    PCB *firstPCB = queue->firstPCB;
+    if (queue->firstPCB->nextProc == NULL) {
+        queue->lastPCB = NULL;
+    }
+    queue->firstPCB = queue->firstPCB->nextProc;
+    return firstPCB;
 }
 
 //TRAPS
@@ -414,11 +437,21 @@ TrapClock(ExceptionStackFrame *frame)
     currentProcClockTicks++;
     (void) frame;
     TracePrintf(0, "trapclock\n");
+    //Get the next process to switch to, and if it's not null, switch to it
+    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+    TracePrintf(0, "Next PCB pid is %d \n", nextReadyProc->pid);
+    if (nextReadyProc != NULL) {
+        TracePrintf(0, "Going to context switch to other proc! \n");
+        ContextSwitch(
+                yalnixContextSwitch, 
+                &currentPCB->savedContext, 
+                currentPCB, nextReadyProc);
+    }
     // TODO: generalize trapclock and remove return
     return;
-    if (currentProcClockTicks >= requestedClockTicks) {
-        ContextSwitch(yalnixContextSwitch, &idlePCB->savedContext, idlePCB, initPCB);
-    }
+//    if (currentProcClockTicks >= requestedClockTicks) {
+//        ContextSwitch(yalnixContextSwitch, &idlePCB->savedContext, idlePCB, initPCB);
+//    }
     
 //    Halt();
 }
@@ -618,6 +651,10 @@ KernelStart(ExceptionStackFrame *frame,
     //allocate space for init PCB's
     initPCB = malloc(sizeof (PCB));
     initPCB->pageTable = allocatePTMemory();
+    
+    //allocate process queues
+    readyQueue = malloc(sizeof(Queue));
+    blockedQueue = malloc(sizeof(Queue));
     
     // Step 5: load idle program
     TracePrintf(1, "Loading idle program\n");

@@ -17,6 +17,7 @@ void PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable);
 void * virtualToPhysicalR1(void * virtualAddress);
 struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 
+
 typedef struct PCB PCB;
 
 struct PCB {
@@ -41,6 +42,13 @@ struct PTFreePage {
     PTFreePage *prev;
 };
 
+typedef struct Queue Queue;
+struct Queue {
+    PCB *firstPCB;
+    PCB *lastPCB;
+};
 // load.c
 int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb, 
         struct pte * pageTable);
+void addProcessToEndOfQueue(PCB *pcb, Queue *queue);
+PCB *removePCBFromFrontOfQueue(Queue *queue);

@@ -19,16 +19,16 @@ main(int argc, char **argv)
         TracePrintf(1, "I'm a real process! (child)\n");
         pid2 = Fork();
         if (pid2 == 0) {
-            TracePrintf(1, "I'm a child of a child!!!");
+            TracePrintf(1, "I'm a child of a child!!!\n");
         }
     } else if (pid == -1) {
         TracePrintf(1, "yalnix refused my child-making\n");
     } else {
         TracePrintf(1, "uninmplemented wth?\n");
     }
-    
+    TracePrintf(1, "THIS SHOULD GET PRINTED 3 TIMES??\n");
     for (;;) {
-        TracePrintf(1, "Init's current pid = %d\n", GetPid());
-        Delay(5);
+        //TracePrintf(1, "Init's current pid = %d\n", GetPid());
+        //Delay(5);
     }
 }
