@@ -10,31 +10,38 @@ main(int argc, char **argv)
     (void) argc;
     (void) argv;
     
-    int myArray[100000];
-    myArray[100] = 10;
-    myArray[50] = 50;
-    int pid;
-    int pid2;
+//    int myArray[100000];
+//    myArray[100] = 10;
+//    myArray[50] = 50;
+//    int pid;
+//    int pid2;
 //  
     //TracePrintf(1, "about to allocate space for string, hopfully in stack\n");
     //str1 = malloc(sizeof(char)*1500);
     //strcpy(str1, "abcdefghijklmnopqrs\n");
-    TracePrintf(1, "myArray[100] = %d", myArray[100]);
-    TracePrintf(1, "myArray[50] = %d", myArray[50]);
+//    TracePrintf(1, "myArray[100] = %d", myArray[100]);
+//    TracePrintf(1, "myArray[50] = %d", myArray[50]);
+//    
+//    pid = Fork();
+//    if (pid == 0) {
+//        TracePrintf(1, "I'm a real process! (child)\n");
+//        pid2 = Fork();
+//        if (pid2 == 0) {
+//            TracePrintf(1, "I'm a child of a child!!!\n");
+//        }
+//    } else if (pid == -1) {
+//        TracePrintf(1, "yalnix refused my child-making\n");
+//    } else {
+//        TracePrintf(1, "uninmplemented wth?\n");
+//    }
+//    TracePrintf(1, "THIS SHOULD GET PRINTED 3 TIMES??\n");
+    char * args[2];
+    char *name = "testExec";
+    args[0] = name;
+    args[1] = NULL;
+    Exec(name, args);
     
-    pid = Fork();
-    if (pid == 0) {
-        TracePrintf(1, "I'm a real process! (child)\n");
-        pid2 = Fork();
-        if (pid2 == 0) {
-            TracePrintf(1, "I'm a child of a child!!!\n");
-        }
-    } else if (pid == -1) {
-        TracePrintf(1, "yalnix refused my child-making\n");
-    } else {
-        TracePrintf(1, "uninmplemented wth?\n");
-    }
-    TracePrintf(1, "THIS SHOULD GET PRINTED 3 TIMES??\n");
+    TracePrintf(1, "Uh oh, I'm not executing the testExec file! :-( \n");
     for (;;) {
         //TracePrintf(1, "Init's current pid = %d\n", GetPid());
         //Delay(5);

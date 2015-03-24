@@ -158,15 +158,23 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb,
 //        numFreePages++;
 //        nextFreePage = nextFreePage->next;
 //    }
-//    // TODO: numFreePages + <pages that would be freed>
-//    if ((text_npg + data_bss_npg + stack_npg) > numFreePages) {
-//        TracePrintf(0,
-//                    "LoadProgram: program '%s' size too large for physical memory\n",
-//                    name);
-//        free(argbuf);
-//        close(fd);
-//        return (-1);
-//    }
+    // TODO: numFreePages + <pages that would be freed>
+    
+    // calculate the number of pages that would be freed first
+    int numPagesToBeFreed = 0;
+    for (i = 0; i < pcb->userStackVPN; i++) {
+        if (pageTable[i].valid == 1)
+            numPagesToBeFreed++;
+    }
+    
+    if ((text_npg + data_bss_npg + stack_npg + numPagesToBeFreed) > availPages) {
+        TracePrintf(0,
+                    "LoadProgram: program '%s' size too large for physical memory\n",
+                    name);
+        free(argbuf);
+        close(fd);
+        return (-1);
+    }
 
 //    >>>> Initialize sp for the current process to (char *)cpp.
 //    >>>> The value of cpp was initialized above.
@@ -182,15 +190,11 @@ LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb,
 //    >>>> address KERNEL_STACK_BASE and KERNEL_STACK_LIMIT).  For
 //    >>>> any of these PTEs that are valid, free the physical memory
 //    >>>> memory page indicated by that PTE's pfn field.  Set all
-//    >>>> of these PTEs to be no longer valid.
-    
-    // TODO: this will make more sense when we load a new process
-    // _after_ the kernel is running
-    
-//    int i;
-//    for (i = 0; i < KERNEL_STACK_BASE / PAGESIZE; i++) {
-//        freeVirtualPage(i, pageTable);
-//    }
+//    >>>> of these PTEs to be no longer valid. 
+    for (i = 0; i < pcb->userStackVPN; i++) {
+        if (pageTable[i].valid == 1)
+            freeVirtualPage(i, pageTable);
+    }
 
     /*
      *  Fill in the page table with the right number of text,

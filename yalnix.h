@@ -2,6 +2,8 @@
 #include <stdbool.h>
 
 // yalnix.c
+int availPages;
+
 int allocatePage();
 void freePage(int pfn);
 void freeVirtualPage(int vpn, struct pte *pageTable);

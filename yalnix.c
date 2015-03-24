@@ -198,6 +198,16 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
 }
 
 //KERNEL CALLS
+int 
+YalnixExec(char *filename, char **argvec, ExceptionStackFrame *frame)
+{
+    int result = LoadProgram(filename, argvec, frame, currentPCB, getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer));
+    if (result < 0) {
+        return ERROR;
+    }
+    return result;
+}
+
 int
 YalnixDelay(int clock_ticks)
 {
@@ -274,7 +284,7 @@ YalnixBrk(void *addr)
     return 0;
 }
 
-void
+int
 YalnixFork(ExceptionStackFrame *frame)
 {
     TracePrintf(1, "yalnixfork\n");
@@ -283,13 +293,6 @@ YalnixFork(ExceptionStackFrame *frame)
     PCB *childPCB = malloc(sizeof(PCB));
     
     childPCB->pageTable = allocatePTMemory();
-    
-    
-    TracePrintf(1, "storing child pcb at %p\n", childPCB);
-    TracePrintf(1, "storing child pt at %p\n", childPCB->pageTable);
-    
-    TracePrintf(1, "allocated space for child pcb\n");
-    
     
     // allocate space for the child's page table
     childPCB->savedContext = currentPCB->savedContext;
@@ -301,6 +304,7 @@ YalnixFork(ExceptionStackFrame *frame)
     
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
+    return currentPCB->pid;
 }
 
 struct pte *
@@ -430,7 +434,10 @@ TrapKernel(ExceptionStackFrame *frame)
         frame->regs[0] = YalnixBrk((void *)frame->regs[1]);
     }
     if (frame->code == YALNIX_FORK) {
-        YalnixFork(frame);
+        frame->regs[0] = YalnixFork(frame);
+    }
+    if (frame->code == YALNIX_EXEC) {
+        frame->regs[0] = YalnixExec((char *)frame->regs[1], (char **)frame->regs[2], frame);
     }
 }
 
