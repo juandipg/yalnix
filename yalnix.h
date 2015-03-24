@@ -54,3 +54,4 @@ int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb,
         struct pte * pageTable);
 void addProcessToEndOfQueue(PCB *pcb, Queue *queue);
 PCB *removePCBFromFrontOfQueue(Queue *queue);
+void destroyProcess(PCB *proc);

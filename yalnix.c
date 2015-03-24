@@ -99,6 +99,7 @@ freeVirtualPage(int vpn, struct pte *pageTable)
 struct pte *
 allocatePTMemory()
 {
+    TracePrintf(1, "allocatePTMemory \n");
     void *physicalAddr;
     if (firstHalfPage == NULL) {
         // free half page list is empty
@@ -113,17 +114,74 @@ allocatePTMemory()
         
         // update the list of half pages with the other half of the page
         // we just allocated
+        TracePrintf(1, "Adding a free page to the half-page list\n");
         topHalf->isFull = false;
         topHalf->next = NULL;
         topHalf->prev = NULL;
         firstHalfPage = physicalAddr + PAGE_TABLE_SIZE;
     } else {
+        TracePrintf(1, "Removing a free page from the half-page list\n");
         physicalAddr = firstHalfPage;
         // get the virtual address corresponding to that physical address
         struct PTFreePage *freeHalfPage = (PTFreePage *)getVirtualAddress(physicalAddr, otherR0PageTableVirtualPointer);
         firstHalfPage = freeHalfPage->next;
+        PTFreePage *next = (PTFreePage *)getVirtualAddress(freeHalfPage->next, currentR0PageTableVirtualPointer);
+        next->prev = freeHalfPage->prev;
+        
     }
     return physicalAddr;
+}
+
+void
+freePTMemory(void *pageTablePhysicalAddress)
+{
+    TracePrintf(1, "Freeing page table memory\n");
+    struct pte *pageTable = getVirtualAddress(pageTablePhysicalAddress, otherR0PageTableVirtualPointer);
+    
+    // figure out if you're on the top or the middle
+    void *otherPage = (void *)DOWN_TO_PAGE(pageTable);
+    
+    if (otherPage == pageTable) {
+        TracePrintf(1, "Other page is the top one\n");
+        otherPage = (char *)pageTable + (PAGESIZE / 2);
+    }
+    
+    PTFreePage *freeOtherPage = (PTFreePage *)otherPage;
+    
+    // first check to see if matching half is in the list of free half-pages
+    if (!freeOtherPage->isFull) {
+        TracePrintf(1, "The other page is free. About to take it out of linked free half page list\n");
+        // if it is, remove it from the free half-pages list
+        // TODO: Factor this out-- have addFreePageToList and removeFreePageFromList(page)
+        if (freeOtherPage->prev == NULL) {
+            TracePrintf(1, "Removing first free page\n");
+            firstHalfPage = freeOtherPage->next;
+        } else {
+            TracePrintf(1, "Removing non first page\n");
+            PTFreePage *prev = (PTFreePage *)getVirtualAddress(freeOtherPage->prev, currentR0PageTableVirtualPointer);
+            prev->next = freeOtherPage->next;
+        }
+        if (freeOtherPage->next != NULL) {
+            TracePrintf(1, "Removing page somewhere in the middle\n");
+            PTFreePage *next = (PTFreePage *)getVirtualAddress(freeOtherPage->next, currentR0PageTableVirtualPointer);
+            next->prev = freeOtherPage->prev;
+        }
+        
+        freePage(DOWN_TO_PAGE(pageTablePhysicalAddress) / PAGESIZE);
+    } else {
+        TracePrintf(1, "The other half page was full, about to add this page to the list\n");
+        // else, add the half-page to the list of free half-pages
+        freeOtherPage->isFull = false;
+        freeOtherPage->next = firstHalfPage;
+        freeOtherPage->prev = NULL;
+        firstHalfPage = pageTablePhysicalAddress;
+        if (firstHalfPage->next != NULL) {
+            TracePrintf(1, "List was nonempty\n");
+            PTFreePage *next = (PTFreePage *)getVirtualAddress(freeOtherPage->next, currentR0PageTableVirtualPointer);
+            next->prev = pageTablePhysicalAddress;
+        }
+        TracePrintf(1, "successfull added page\n");
+    }
 }
 
 SavedContext *
@@ -179,6 +237,24 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     currentPCB = initPCB;
 
     return ctx;
+}
+
+SavedContext *
+destroyAndContextSwitch (SavedContext *ctx, void *p1, void *p2)
+{
+    // TODO factor out common code between two context switch functions
+    (void)ctx;
+    PCB *pcb1 = (PCB *)p1; //init
+    PCB *pcb2 = (PCB *)p2; //idle
+    
+    destroyProcess(pcb1);
+    
+    WriteRegister(REG_PTR0, (RCS421RegVal)pcb2->pageTable);
+    
+    WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
+    
+    currentPCB = pcb2;
+    return &pcb2->savedContext; //return idle's context, which will run right after
 }
 
 SavedContext *
@@ -497,7 +573,7 @@ TrapMemory(ExceptionStackFrame *frame)
     // if addr is in region 0, is below the currently allocated memory
     // for the stack, and above the current break for the currently 
     // executing process, grow the user stack by enough pages
-    if (((long)addr < VMEM_0_LIMIT) && 
+    if (((long)addr < USER_STACK_LIMIT) &&
             (addrVPN < currentPCB->userStackVPN) &&
             (addrVPN > currentPCB->brkVPN - 1)) {
         
@@ -521,9 +597,21 @@ TrapMemory(ExceptionStackFrame *frame)
         if (nextReadyProc == NULL) {
             nextReadyProc = idlePCB;
         }
+        
         // TODO: Print an error message with the pid and an explanation
-        ContextSwitch (yalnixContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
+        TracePrintf(1, "About to destroy process #%d because there wasn't enough memory!\n", currentPCB->pid);
+        ContextSwitch (destroyAndContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
     }
+}
+
+void
+destroyProcess(PCB *proc) 
+{
+    // first, free the page table
+    freePTMemory(proc->pageTable);
+    
+    // then, free the pcb
+    free(proc);
 }
 
 void

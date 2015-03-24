@@ -10,7 +10,6 @@ main(int argc, char **argv)
     (void) argc;
     (void) argv;
     
-//    int myArray[100000];
 //    myArray[100] = 10;
 //    myArray[50] = 50;
 //    int pid;
@@ -21,10 +20,13 @@ main(int argc, char **argv)
     //strcpy(str1, "abcdefghijklmnopqrs\n");
 //    TracePrintf(1, "myArray[100] = %d", myArray[100]);
 //    TracePrintf(1, "myArray[50] = %d", myArray[50]);
-//    
-//    pid = Fork();
-//    if (pid == 0) {
-//        TracePrintf(1, "I'm a real process! (child)\n");
+// 
+    int pid = Fork();
+    if (pid == 0) {
+        //int myArray[4294967296];
+        //TracePrintf(1, "%d\n", myArray[30]);
+        TracePrintf(1, "I'm a real process! (child)\n");
+    }
 //        pid2 = Fork();
 //        if (pid2 == 0) {
 //            TracePrintf(1, "I'm a child of a child!!!\n");
