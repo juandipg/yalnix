@@ -383,6 +383,13 @@ YalnixFork(ExceptionStackFrame *frame)
     return currentPCB->pid;
 }
 
+void
+YalnixExit(ExceptionStackFrame *frame, int status)
+{
+    (void) frame;
+    (void) status;
+}
+
 struct pte *
 getVirtualAddress(void *physicalAddr, void *pageVirtualAddr)
 {
@@ -514,6 +521,9 @@ TrapKernel(ExceptionStackFrame *frame)
     }
     if (frame->code == YALNIX_EXEC) {
         frame->regs[0] = YalnixExec((char *)frame->regs[1], (char **)frame->regs[2], frame);
+    }
+    if (frame->code == YALNIX_EXIT) {
+        
     }
 }
 

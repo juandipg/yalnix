@@ -19,6 +19,10 @@ void PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable);
 void * virtualToPhysicalR1(void * virtualAddress);
 struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 
+// different status codes for a process
+#define RUNNING 1
+#define READY   2
+#define BLOCKED 3
 
 typedef struct PCB PCB;
 
@@ -30,6 +34,17 @@ struct PCB {
     PCB *prevProc;
     int brkVPN;
     int userStackVPN;
+    int status;
+    int exitStatus;
+    PCB * firstChild;
+    PCB * parent;
+};
+
+typedef struct child child;
+
+struct child {
+    PCB * pcb;
+    child * sibling;
 };
 
 typedef struct FreePage FreePage;
