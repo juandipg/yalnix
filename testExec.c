@@ -12,8 +12,8 @@ main(int argc, char **argv)
     
     TracePrintf(1, "I'm in the testExec program! It worked! \n");
     
-    for (;;) {
-        
-    }
+    TracePrintf(1, "About to exit\n");
+    Exit(0);
+    TracePrintf(1, "Yikes, something went horribly wrong and I didn't exit :-( \n");
     return 0;
 }

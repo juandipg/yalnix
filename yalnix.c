@@ -360,7 +360,7 @@ YalnixBrk(void *addr)
     return 0;
 }
 
-int
+void
 YalnixFork(ExceptionStackFrame *frame)
 {
     TracePrintf(1, "yalnixfork\n");
@@ -375,19 +375,24 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->brkVPN = currentPCB->brkVPN;
     childPCB->userStackVPN = currentPCB->userStackVPN;
     
-    // assign it a new pid
+    // setup child PCB
     childPCB->pid = nextPid++;
+    childPCB->parent = currentPCB;
+    childPCB->nextProc = NULL;
+    childPCB->prevProc = NULL;
+    childPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
+    childPCB->childExitStatuses->firstExitStatus = NULL;
+    childPCB->childExitStatuses->lastExitStatus = NULL;
+    childPCB->firstChild = NULL;
     
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
-    return currentPCB->pid;
 }
 
 void
 YalnixExit(int status)
 {
-    (void) status;
-    
+    TracePrintf(1, "YalnixExit\n");
     // For each child in the current PCB, set its parent pointer to NULL
     child *currentChild = currentPCB->firstChild;
     while (currentChild != NULL) {
@@ -570,8 +575,8 @@ removePCBFromFrontOfQueue(PCBQueue *queue)
     if (queue->firstPCB->nextProc == NULL) {
         queue->lastPCB = NULL;
     }
-    queue->firstPCB = queue->firstPCB->nextProc;
     queue->firstPCB->prevProc = NULL;
+    queue->firstPCB = queue->firstPCB->nextProc;
     return firstPCB;
 }
 
@@ -602,7 +607,7 @@ TrapKernel(ExceptionStackFrame *frame)
         frame->regs[0] = YalnixBrk((void *)frame->regs[1]);
     }
     if (frame->code == YALNIX_FORK) {
-        frame->regs[0] = YalnixFork(frame);
+        YalnixFork(frame);
     }
     if (frame->code == YALNIX_EXEC) {
         frame->regs[0] = YalnixExec((char *)frame->regs[1], (char **)frame->regs[2], frame);

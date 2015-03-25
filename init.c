@@ -26,24 +26,20 @@ main(int argc, char **argv)
         //int myArray[4294967296];
         //TracePrintf(1, "%d\n", myArray[30]);
         TracePrintf(1, "I'm a real process! (child)\n");
-    }
-//        pid2 = Fork();
-//        if (pid2 == 0) {
-//            TracePrintf(1, "I'm a child of a child!!!\n");
-//        }
-//    } else if (pid == -1) {
-//        TracePrintf(1, "yalnix refused my child-making\n");
-//    } else {
-//        TracePrintf(1, "uninmplemented wth?\n");
-//    }
-//    TracePrintf(1, "THIS SHOULD GET PRINTED 3 TIMES??\n");
-    char * args[2];
-    char *name = "testExec";
-    args[0] = name;
-    args[1] = NULL;
-    Exec(name, args);
-    
-    TracePrintf(1, "Uh oh, I'm not executing the testExec file! :-( \n");
+//        char * args[2];
+//        char *name = "testExec";
+//        args[0] = name;
+//        args[1] = NULL;
+//        Exec(name, args);
+        int pid2 = Fork();
+        if (pid2 == 0) {
+            TracePrintf(1, "I'm a child of a child!!!\n");
+        }
+    } else if (pid == -1) {
+        TracePrintf(1, "yalnix refused my child-making\n");
+    } 
+    TracePrintf(1, "THIS SHOULD GET PRINTED 3 TIMES??\n");
+    TracePrintf(1, "my pid = %d and I did not exit \n", pid);
     for (;;) {
         //TracePrintf(1, "Init's current pid = %d\n", GetPid());
         //Delay(5);
