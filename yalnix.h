@@ -25,6 +25,23 @@ struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 #define BLOCKED 3
 
 typedef struct PCB PCB;
+typedef struct child child;
+typedef struct ExitStatus ExitStatus;
+typedef struct FreePage FreePage;
+typedef struct PTFreePage PTFreePage;
+typedef struct PCBQueue PCBQueue;
+typedef struct ExitStatusQueue ExitStatusQueue;
+
+struct child {
+    PCB * pcb;
+    child * sibling;
+};
+
+struct ExitStatus {
+    int status;
+    int pid;
+    ExitStatus *next;
+};
 
 struct PCB {
     int pid;
@@ -36,37 +53,37 @@ struct PCB {
     int userStackVPN;
     int status;
     int exitStatus;
-    PCB * firstChild;
+    child * firstChild;
     PCB * parent;
+    ExitStatusQueue *childExitStatuses;
 };
 
-typedef struct child child;
-
-struct child {
-    PCB * pcb;
-    child * sibling;
-};
-
-typedef struct FreePage FreePage;
 struct FreePage {
     FreePage *next;
 };
 
-typedef struct PTFreePage PTFreePage;
 struct PTFreePage {
     bool isFull;
     PTFreePage *next;
     PTFreePage *prev;
 };
 
-typedef struct Queue Queue;
-struct Queue {
+struct PCBQueue {
     PCB *firstPCB;
     PCB *lastPCB;
 };
+
+struct ExitStatusQueue {
+    ExitStatus *firstExitStatus;
+    ExitStatus *lastExitStatus;
+};
+
 // load.c
 int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb, 
         struct pte * pageTable);
-void addProcessToEndOfQueue(PCB *pcb, Queue *queue);
-PCB *removePCBFromFrontOfQueue(Queue *queue);
+void addProcessToEndOfQueue(PCB *pcb, PCBQueue *queue);
+PCB *removePCBFromFrontOfQueue(PCBQueue *queue);
 void destroyProcess(PCB *proc);
+void addExitStatusToEndOfQueue(ExitStatus *exitStatus, ExitStatusQueue *esq);
+void removePCBFromQueue(PCBQueue *queue, PCB *pcb);
+ExitStatus *removeExitStatusFromFrontOfQueue(ExitStatusQueue *esq);

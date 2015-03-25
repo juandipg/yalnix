@@ -19,9 +19,9 @@ PCB *initPCB;
 PCB *idlePCB;
 PCB *currentPCB;
 // ready queue
-Queue *readyQueue;
+PCBQueue *readyQueue;
 //blocked queue
-Queue *blockedQueue;
+PCBQueue *blockedQueue;
 
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
@@ -384,10 +384,52 @@ YalnixFork(ExceptionStackFrame *frame)
 }
 
 void
-YalnixExit(ExceptionStackFrame *frame, int status)
+YalnixExit(int status)
 {
-    (void) frame;
     (void) status;
+    
+    // For each child in the current PCB, set its parent pointer to NULL
+    child *currentChild = currentPCB->firstChild;
+    while (currentChild != NULL) {
+        currentChild->pcb->parent = NULL;
+        currentChild = currentChild->sibling;
+    }
+    
+    // If the current PCB has a parent, check it's parent's status
+    // If the parent is waiting:
+    //  1. move the parent from the blocked queue to the ready queue
+    //  2. Add a new childStatus to the parent's FIFO dead child queue
+    if (currentPCB->parent != NULL) {
+        if (currentPCB->parent->status == BLOCKED) {
+            removePCBFromQueue(blockedQueue, currentPCB->parent);
+            addProcessToEndOfQueue(currentPCB->parent, readyQueue);
+            ExitStatus *exitStatus = malloc(sizeof(ExitStatus));
+            exitStatus->pid = currentPCB->pid;
+            exitStatus->status = status;
+            addExitStatusToEndOfQueue(exitStatus, currentPCB->parent->childExitStatuses);
+        }
+    }
+    
+    // Context switch using the destroyAndContextSwitch function
+    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+    if (nextReadyProc == NULL) {
+        nextReadyProc = idlePCB;
+    }
+    ContextSwitch(destroyAndContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
+}
+
+int
+YalnixWait(int *status_ptr)
+{
+    (void)status_ptr;
+    // If the current process's dead child queue is empty:
+        // Move the current PCB to the blocked queue
+    
+        // Context switch to next ready process using yalnixContextSwitch function
+    
+    // Take first dead child off the parent's dead child queue and 
+    // return the status of that dead child
+    return 0;
 }
 
 struct pte *
@@ -474,7 +516,22 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
 }
 
 void
-addProcessToEndOfQueue(PCB *pcb, Queue *queue)
+addExitStatusToEndOfQueue(ExitStatus *exitStatus, ExitStatusQueue *esq)
+{
+    // if the queue is empty
+    if (esq->firstExitStatus == NULL) {
+        exitStatus->next = NULL;
+        esq->lastExitStatus = exitStatus;
+        esq->firstExitStatus = exitStatus;
+    } else {    // if the queue is nonempty
+        esq->lastExitStatus->next = exitStatus;
+        exitStatus->next = NULL;
+        esq->lastExitStatus = exitStatus;
+    }
+}
+
+void
+addProcessToEndOfQueue(PCB *pcb, PCBQueue *queue)
 {
     // if the queue is empty
     if (queue->firstPCB == NULL) {
@@ -483,13 +540,28 @@ addProcessToEndOfQueue(PCB *pcb, Queue *queue)
         queue->firstPCB = pcb;
     } else {    // if the queue is nonempty
         queue->lastPCB->nextProc = pcb;
+        pcb->prevProc = queue->lastPCB;
         queue->lastPCB = pcb;
         queue->lastPCB->nextProc = NULL;
     }
 }
 
+ExitStatus *
+removeExitStatusFromFrontOfQueue(ExitStatusQueue *esq)
+{
+    ExitStatus *firstES = esq->firstExitStatus;
+    if (firstES == NULL) {
+        return NULL;
+    }
+    if (esq->firstExitStatus->next == NULL) {
+        esq->lastExitStatus = NULL;
+    }
+    esq->firstExitStatus = esq->firstExitStatus->next;
+    return firstES;
+}
+
 PCB *
-removePCBFromFrontOfQueue(Queue *queue)
+removePCBFromFrontOfQueue(PCBQueue *queue)
 {
     PCB *firstPCB = queue->firstPCB;
     if (firstPCB == NULL) {
@@ -499,7 +571,20 @@ removePCBFromFrontOfQueue(Queue *queue)
         queue->lastPCB = NULL;
     }
     queue->firstPCB = queue->firstPCB->nextProc;
+    queue->firstPCB->prevProc = NULL;
     return firstPCB;
+}
+
+void
+removePCBFromQueue(PCBQueue *queue, PCB *pcb)
+{
+    if (pcb->prevProc == NULL) {
+        removePCBFromFrontOfQueue(queue);
+    } else {
+        pcb->prevProc->nextProc = pcb->nextProc;
+        if (pcb->nextProc != NULL)
+            pcb->nextProc->prevProc = pcb->prevProc;
+    }
 }
 
 //TRAPS
@@ -523,7 +608,10 @@ TrapKernel(ExceptionStackFrame *frame)
         frame->regs[0] = YalnixExec((char *)frame->regs[1], (char **)frame->regs[2], frame);
     }
     if (frame->code == YALNIX_EXIT) {
-        
+        YalnixExit((int)frame->regs[1]);
+    }
+    if (frame->code == YALNIX_WAIT) {
+        frame->regs[0] = YalnixWait((int *)frame->regs[1]);
     }
 }
 
@@ -678,7 +766,6 @@ KernelStart(ExceptionStackFrame *frame,
     
     idlePCB = malloc(sizeof(PCB));
     idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
-    
 
     
     TracePrintf(1, "Address of idlePCB after malloc: %p\n", idlePCB);
@@ -799,15 +886,22 @@ KernelStart(ExceptionStackFrame *frame,
     WriteRegister(REG_VM_ENABLE, 1);
     virtualMemoryEnabled = 1;
     
-    //allocate space for init PCB's
+    // initialize initPCB
     initPCB = malloc(sizeof (PCB));
     initPCB->pageTable = allocatePTMemory();
+    initPCB->nextProc = NULL;
+    initPCB->prevProc = NULL;
+    initPCB->parent = NULL;
+    initPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
+    initPCB->childExitStatuses->firstExitStatus = NULL;
+    initPCB->childExitStatuses->lastExitStatus = NULL;
+    initPCB->firstChild = NULL;
     
     //allocate process queues
-    readyQueue = malloc(sizeof(Queue));
+    readyQueue = malloc(sizeof(PCBQueue));
     readyQueue->firstPCB = NULL;
     readyQueue->lastPCB = NULL;
-    blockedQueue = malloc(sizeof(Queue));
+    blockedQueue = malloc(sizeof(PCBQueue));
     blockedQueue->firstPCB = NULL;
     blockedQueue->lastPCB = NULL;
     
