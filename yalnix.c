@@ -427,14 +427,31 @@ int
 YalnixWait(int *status_ptr)
 {
     (void)status_ptr;
+    // return ERROR if curernt process has no child processes 
+    if (currentPCB->childExitStatuses == NULL && currentPCB->firstChild == NULL) {
+        return ERROR;
+    }
     // If the current process's dead child queue is empty:
+    if  (currentPCB->childExitStatuses == NULL) {
         // Move the current PCB to the blocked queue
-    
+        addProcessToEndOfQueue(currentPCB, blockedQueue);
+        
         // Context switch to next ready process using yalnixContextSwitch function
+        PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+        if (nextReadyProc == NULL) {
+            nextReadyProc = idlePCB;
+        }
+        ContextSwitch(
+                yalnixContextSwitch, 
+                &currentPCB->savedContext, 
+                currentPCB, nextReadyProc);
+    }
     
     // Take first dead child off the parent's dead child queue and 
     // return the status of that dead child
-    return 0;
+    ExitStatus *firstDeadChild = removeExitStatusFromFrontOfQueue(currentPCB->childExitStatuses);
+    *status_ptr = firstDeadChild->status;
+    return firstDeadChild->pid;
 }
 
 struct pte *
