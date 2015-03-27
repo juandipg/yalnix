@@ -774,9 +774,9 @@ TrapClock(ExceptionStackFrame *frame)
 void
 TrapIllegal(ExceptionStackFrame *frame)
 {
-    printf("Process with pid %d accessed illegal address %p\n", 
+    printf("Process with pid %d tried to perform an illegal instruction at address %p\n", 
         currentPCB->pid,
-        frame->addr);
+        frame->pc);
     YalnixExit(1);
 }
 
