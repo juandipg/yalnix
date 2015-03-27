@@ -5,6 +5,7 @@
 #include <comp421/yalnix.h>
 #include "stdint.h"
 #include "yalnix.h"
+#include <stdio.h>
 
 #define USEDPTE 0x80000000
 
@@ -773,9 +774,10 @@ TrapClock(ExceptionStackFrame *frame)
 void
 TrapIllegal(ExceptionStackFrame *frame)
 {
-    (void) frame;
-    TracePrintf(0, "trapillegal\n");
-    Halt();
+    printf("Process with pid %d accessed illegal address %p\n", 
+        currentPCB->pid,
+        frame->addr);
+    YalnixExit(1);
 }
 
 void
@@ -838,8 +840,9 @@ void
 TrapMath(ExceptionStackFrame *frame)
 {
     (void) frame;
-    TracePrintf(0, "trapmath\n");
-    Halt();
+    printf("mathematical exception occurred while running process with pid %d\n",
+            currentPCB->pid);
+    YalnixExit(1);
 }
 
 void
@@ -1007,6 +1010,12 @@ KernelStart(ExceptionStackFrame *frame,
     TracePrintf(10, "enabling virtual memory\n");
     WriteRegister(REG_VM_ENABLE, 1);
     virtualMemoryEnabled = 1;
+    
+    // recover the last MEM_INVALID_PAGES at the bottom of physical memory
+    int bottom = VMEM_BASE / PAGESIZE;
+    for (pfn = bottom; pfn < MEM_INVALID_PAGES + bottom; pfn++) {
+        freePage(pfn);
+    }
     
     // initialize initPCB
     initPCB = malloc(sizeof (PCB));
