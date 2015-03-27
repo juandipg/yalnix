@@ -211,7 +211,7 @@ freePTMemory(void *pageTablePhysicalAddress)
 SavedContext *
 startInit(SavedContext *ctx, void *frame, void *p2)
 {
-    (void)p2;
+    char **cmd_args = (char **) p2;
     
     // map the location of init's page table to an ad-hoc virtual address
     struct pte * initPageTable =
@@ -249,12 +249,18 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     TracePrintf(10, "About to flush TLB in startInit\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
-    // Step 4: call LoadProgram(init)
+    // Step 4: call LoadProgram()
     char * args[2];
     char *name = "init";
     args[0] = name;
     args[1] = NULL;
-    LoadProgram(name, args, (ExceptionStackFrame *)frame, initPCB, initPageTable);
+    
+    char **load_args = args;
+    if (cmd_args[0] != NULL) {
+        name = cmd_args[0];
+        load_args = cmd_args;
+    }
+    LoadProgram(name, load_args, (ExceptionStackFrame *)frame, initPCB, initPageTable);
     
     // Step 5: return
     // idlePCB->savedContext = *ctx;
@@ -867,10 +873,7 @@ TrapTtyTransmit(ExceptionStackFrame *frame)
 void
 KernelStart(ExceptionStackFrame *frame,
         unsigned int pmem_size, void *orig_brk, char **cmd_args)
-{
-    // TODO: load the requested program instead of always init
-    (void) cmd_args;
-    
+{   
     kernel_brk = orig_brk;
     global_pmem_size = pmem_size;
     
@@ -1055,7 +1058,7 @@ KernelStart(ExceptionStackFrame *frame,
     idlePCB->pid = nextPid++;
 
     // Step 6: call context switch to save idle and load init
-    ContextSwitch(startInit, &idlePCB->savedContext, frame, NULL);
+    ContextSwitch(startInit, &idlePCB->savedContext, frame, cmd_args);
 
     // Step 7: return
 }

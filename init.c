@@ -7,7 +7,9 @@ int
 main(int argc, char **argv)
 {
     (void) argc;
-    (void) argv;
+    TracePrintf(1, "name: %s\n", argv[0]);
+    TracePrintf(1, "param1: %s\n", argv[1]);
+    TracePrintf(1, "param2: %s\n", argv[2]);
 
     int pid = Fork();
     if (pid == 0) {
