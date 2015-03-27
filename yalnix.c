@@ -23,7 +23,10 @@ PCB *currentPCB;
 // ready queue
 PCBQueue *readyQueue;
 //blocked queue
-PCBQueue *blockedQueue;
+PCBQueue *waitBlockedQueue;
+PCBQueue *delayBlockedQueue;
+
+
 
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
@@ -306,17 +309,24 @@ int
 YalnixDelay(int clock_ticks)
 {
     TracePrintf(10, "clock ticks passed to YalnixDelay = %d\n", clock_ticks);
-    requestedClockTicks = clock_ticks;
-    if (clock_ticks < 0) {
-        return ERROR;
+    if (clock_ticks == 0) return 0;
+    if (clock_ticks < 0) return ERROR;
+    
+    currentPCB->delayTimeLeft = clock_ticks;
+    
+    // Add currentPCB to delay blocked queue
+    addProcessToEndOfQueue(currentPCB, delayBlockedQueue);
+    
+    // Context switch to next ready process
+    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+    if (nextReadyProc == NULL) {
+        nextReadyProc = idlePCB;
     }
-    if (clock_ticks == 0) {
-        return 0;
-    }
-    currentProcClockTicks = 0;
-    // add pcb1 back onto ready queue
-    addProcessToEndOfQueue(initPCB, readyQueue);
-    ContextSwitch(yalnixContextSwitch, &initPCB->savedContext, initPCB, idlePCB);
+    
+    ContextSwitch(
+            yalnixContextSwitch, 
+            &currentPCB->savedContext, 
+            currentPCB, nextReadyProc);
     return 0;
 }
 
@@ -441,7 +451,7 @@ YalnixExit(int status)
         TracePrintf(1, "6\n");
         if (currentPCB->parent->status == STATUS_WAIT_BLOCKED) {
             TracePrintf(1, "PARENT WAS WAIT BLOCKED!\n");
-            removePCBFromQueue(blockedQueue, currentPCB->parent);
+            removePCBFromQueue(waitBlockedQueue, currentPCB->parent);
             currentPCB->parent->status = STATUS_READY;
             addProcessToEndOfQueue(currentPCB->parent, readyQueue);
         }
@@ -489,7 +499,7 @@ YalnixWait(int *status_ptr)
         // Move the current PCB to the blocked queue
         currentPCB->status = STATUS_WAIT_BLOCKED;
         TracePrintf(1, "WAIT: ADDING PROC TO BLOCKED QUEUE %d\n", currentPCB->pid);
-        addProcessToEndOfQueue(currentPCB, blockedQueue);
+        addProcessToEndOfQueue(currentPCB, waitBlockedQueue);
         
         // Context switch to next ready process using yalnixContextSwitch function
         TracePrintf(1, "WAIT: REMOVING PROC FROM READY QUEUE\n");
@@ -706,28 +716,43 @@ TrapKernel(ExceptionStackFrame *frame)
 void
 TrapClock(ExceptionStackFrame *frame)
 {
+    (void)frame;
     currentProcClockTicks++;
-    (void) frame;
     TracePrintf(0, "trapclock\n");
+    
+    if (currentPCB != idlePCB) {
+        addProcessToEndOfQueue(currentPCB, readyQueue);
+    }
+    // Loop through delay queue and move any processes that have completed their
+    // delay to the ready queue
+    PCB *currentDelayedPCB = delayBlockedQueue->firstPCB;
+    while (currentDelayedPCB != NULL) {
+        if (--currentDelayedPCB->delayTimeLeft <= 0) {
+            removePCBFromQueue(delayBlockedQueue, currentDelayedPCB);
+            addProcessToEndOfQueue(currentDelayedPCB, readyQueue);
+        }
+        currentDelayedPCB = currentDelayedPCB->nextProc;
+    }
+    
     //Get the next process to switch to, and if it's not null, switch to it
     PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
-    
-    
-    if (nextReadyProc != NULL) {
-        // add pcb1 back onto ready queue
-        TracePrintf(1, "Context switching in trap clock\n");
-        addProcessToEndOfQueue(currentPCB, readyQueue);
+    if (nextReadyProc == NULL ) {
+        nextReadyProc = idlePCB;
+    }
+    // add pcb1 back onto ready queue
+    TracePrintf(1, "Context switching in trap clock\n");
+    if (nextReadyProc != currentPCB) {
+        TracePrintf(0, "Context switching from pid %d to %d\n", nextReadyProc->pid, currentPCB->pid);
         ContextSwitch(
                 yalnixContextSwitch, 
                 &currentPCB->savedContext, 
                 currentPCB, nextReadyProc);
-    } else {
+    }
         // Else, do nothing ?
 //        ContextSwitch(
 //                yalnixContextSwitch, 
 //                &currentPCB->savedContext, 
 //                currentPCB, idlePCB);
-    }
     // TODO: generalize trapclock and remove return
     return;
 //    if (currentProcClockTicks >= requestedClockTicks) {
@@ -993,9 +1018,12 @@ KernelStart(ExceptionStackFrame *frame,
     readyQueue = malloc(sizeof(PCBQueue));
     readyQueue->firstPCB = NULL;
     readyQueue->lastPCB = NULL;
-    blockedQueue = malloc(sizeof(PCBQueue));
-    blockedQueue->firstPCB = NULL;
-    blockedQueue->lastPCB = NULL;
+    waitBlockedQueue = malloc(sizeof(PCBQueue));
+    waitBlockedQueue->firstPCB = NULL;
+    waitBlockedQueue->lastPCB = NULL;
+    delayBlockedQueue = malloc(sizeof(PCBQueue));
+    delayBlockedQueue->firstPCB = NULL;
+    delayBlockedQueue->lastPCB = NULL;
     
     // Step 5: load idle program
     TracePrintf(10, "Loading idle program\n");

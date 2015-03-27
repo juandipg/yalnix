@@ -48,6 +48,7 @@ struct ExitStatus {
 
 struct PCB {
     int pid;
+    int delayTimeLeft;
     struct pte *pageTable;
     SavedContext savedContext;
     PCB *nextProc;
