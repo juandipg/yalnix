@@ -826,7 +826,8 @@ TrapMemory(ExceptionStackFrame *frame)
             nextReadyProc = idlePCB;
         }
         
-        // TODO: Print an error message with the pid and an explanation
+        printf("terminating process with pid %d after receiving trap memory with address %p\n", 
+                currentPCB->pid, frame->addr);
         TracePrintf(10, "About to destroy process #%d because there wasn't enough memory!\n", currentPCB->pid);
         ContextSwitch (destroyAndContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
     }
