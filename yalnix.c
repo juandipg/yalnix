@@ -27,7 +27,7 @@ PCBQueue *readyQueue;
 PCBQueue *waitBlockedQueue;
 PCBQueue *delayBlockedQueue;
 
-
+struct terminal terminals[NUM_TERMINALS];
 
 int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
@@ -46,6 +46,25 @@ void *topR1PagePointer = (void *)VMEM_1_LIMIT - PAGESIZE;
 // ad-hoc virtual pointers for referencing page tables
 void *currentR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (2*PAGESIZE);
 void *otherR0PageTableVirtualPointer = (void *)VMEM_1_LIMIT - (3*PAGESIZE);
+
+void
+contextSwitchToNextReadyProcess()
+{
+    // Context switch to next ready process
+    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+    if (nextReadyProc == NULL) {
+        nextReadyProc = idlePCB;
+    }
+    
+    if (nextReadyProc == currentPCB) {
+        return;
+    }
+    
+    ContextSwitch(
+            yalnixContextSwitch, 
+            &currentPCB->savedContext, 
+            currentPCB, nextReadyProc);
+}
 
 /*
  * Expects:
@@ -326,16 +345,7 @@ YalnixDelay(int clock_ticks)
     // Add currentPCB to delay blocked queue
     addProcessToEndOfQueue(currentPCB, delayBlockedQueue);
     
-    // Context switch to next ready process
-    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
-    if (nextReadyProc == NULL) {
-        nextReadyProc = idlePCB;
-    }
-    
-    ContextSwitch(
-            yalnixContextSwitch, 
-            &currentPCB->savedContext, 
-            currentPCB, nextReadyProc);
+    contextSwitchToNextReadyProcess();
     return 0;
 }
 
@@ -510,20 +520,7 @@ YalnixWait(int *status_ptr)
         TracePrintf(1, "WAIT: ADDING PROC TO BLOCKED QUEUE %d\n", currentPCB->pid);
         addProcessToEndOfQueue(currentPCB, waitBlockedQueue);
         
-        // Context switch to next ready process using yalnixContextSwitch function
-        TracePrintf(1, "WAIT: REMOVING PROC FROM READY QUEUE\n");
-        PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
-        TracePrintf(1, "WAIT: REMOVED PROC'S PID IS: %d\n", nextReadyProc->pid);
-        if (nextReadyProc == NULL) {
-            nextReadyProc = idlePCB;
-        }
-       
-        
-        TracePrintf(1, "about to context switch to process: %d\n", nextReadyProc->pid);
-        ContextSwitch(
-                yalnixContextSwitch, 
-                &currentPCB->savedContext, 
-                currentPCB, nextReadyProc);
+        contextSwitchToNextReadyProcess();
     }
     
     TracePrintf(1, "child exit status queue is not empty\n");
@@ -721,6 +718,11 @@ TrapKernel(ExceptionStackFrame *frame)
     if (frame->code == YALNIX_WAIT) {
         frame->regs[0] = YalnixWait((int *)frame->regs[1]);
     }
+    if (frame->code == YALNIX_TTY_READ) {
+        frame->regs[0] = YalnixTtyRead(frame->regs[1], 
+                (void *) frame->regs[2],
+                frame->regs[3]);
+    }
 }
 
 void
@@ -729,7 +731,6 @@ TrapClock(ExceptionStackFrame *frame)
     (void)frame;
     currentProcClockTicks++;
     TracePrintf(0, "trapclock\n");
-    
    
     // Loop through delay queue and move any processes that have completed their
     // delay to the ready queue
@@ -750,32 +751,7 @@ TrapClock(ExceptionStackFrame *frame)
     if (currentPCB != idlePCB) {
         addProcessToEndOfQueue(currentPCB, readyQueue);
     }
-    //Get the next process to switch to, and if it's not null, switch to it
-    PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
-    if (nextReadyProc == NULL ) {
-        nextReadyProc = idlePCB;
-    }
-    // add pcb1 back onto ready queue
-    TracePrintf(1, "Context switching in trap clock\n");
-    if (nextReadyProc != currentPCB) {
-        TracePrintf(0, "Context switching from pid %d to %d\n", nextReadyProc->pid, currentPCB->pid);
-        ContextSwitch(
-                yalnixContextSwitch, 
-                &currentPCB->savedContext, 
-                currentPCB, nextReadyProc);
-    }
-        // Else, do nothing ?
-//        ContextSwitch(
-//                yalnixContextSwitch, 
-//                &currentPCB->savedContext, 
-//                currentPCB, idlePCB);
-    // TODO: generalize trapclock and remove return
-    return;
-//    if (currentProcClockTicks >= requestedClockTicks) {
-//        ContextSwitch(yalnixContextSwitch, &idlePCB->savedContext, idlePCB, initPCB);
-//    }
-    
-//    Halt();
+    contextSwitchToNextReadyProcess();
 }
 
 void
@@ -860,7 +836,57 @@ TrapTtyReceive(ExceptionStackFrame *frame)
 {
     (void) frame;
     TracePrintf(0, "trapttyreceive\n");
-    Halt();
+    
+    // get the terminal id
+    int term = frame->code;
+    
+    // allocate space for an input line
+    inputLine *line = malloc(sizeof(inputLine));
+    
+    // allocate space for a full-sized buffer
+    line->buf = malloc(TERMINAL_MAX_LINE);
+    
+    // read the data from the hardware
+    int len = TtyReceive(term, line->buf, TERMINAL_MAX_LINE);
+    
+    // re-size the block of memory down to the real length
+    line->buf = realloc(line->buf, len);
+    
+    addInputLineToEndOfQueue(line, &terminals[term].inputLineQueue);
+    
+    // if a process is waiting for a line from this terminal, unblock it
+    // and put it at the end of the ready queue
+    if (terminals[term].readBlockedPCBs.firstPCB != NULL) {
+        PCB* proc = removePCBFromFrontOfQueue(&terminals[term].readBlockedPCBs);
+        proc->status = STATUS_READY;
+        addProcessToEndOfQueue(proc, readyQueue);
+    }
+}
+
+int
+YalnixTtyRead(int tty_id, void *buf, int len) 
+{
+    if (terminals[tty_id].inputLineQueue.first == NULL) {
+        // block this process
+        currentPCB->status = STATUS_TERMINAL_BLOCKED;
+        addProcessToEndOfQueue(currentPCB, &terminals[tty_id].readBlockedPCBs);
+        contextSwitchToNextReadyProcess();
+    }
+    struct terminal t = terminals[tty_id];
+    inputLine *line = t.inputLineQueue.first;
+    int count = 0;
+    char data = '\0'; // use a dummy character to enter the while loop
+    while (data != '\n' && count < len) {
+        // get the data from the input buffer
+        data = line->buf[count];
+        // copy it over to the user's buffer
+        ((char *)buf)[count] = data;
+        count++;
+    }
+    if (data == '\n') {
+        removeInputLineFromFrontOfQueue(&t.inputLineQueue);
+    }
+    return count;
 }
 
 void
@@ -869,6 +895,33 @@ TrapTtyTransmit(ExceptionStackFrame *frame)
     (void) frame;
     TracePrintf(0, "trapttytransmit\n");
     Halt();
+}
+
+void
+addInputLineToEndOfQueue(inputLine *line, lineQueue *queue) 
+{
+    if (queue->first == NULL) {
+        line->next = NULL;
+        queue->last = line;
+        queue->first = line;
+    } else {    // if the queue is nonempty
+        queue->last->next = line;
+        line->next = NULL;
+        queue->first = line;
+    }
+}
+
+inputLine *
+removeInputLineFromFrontOfQueue(lineQueue *queue) {
+    inputLine *first = queue->first;
+    if (first == NULL) {
+        return NULL;
+    }
+    if (queue->first->next == NULL) {
+        queue->last = NULL;
+    }
+    queue->first = queue->first->next;
+    return first;
 }
 
 void
@@ -1048,6 +1101,17 @@ KernelStart(ExceptionStackFrame *frame,
     delayBlockedQueue = malloc(sizeof(PCBQueue));
     delayBlockedQueue->firstPCB = NULL;
     delayBlockedQueue->lastPCB = NULL;
+    
+    int term;
+    for (term = 0; term < NUM_TERMINALS; term++) {
+        terminals[term].inputLineQueue.first = NULL;
+        terminals[term].inputLineQueue.last = NULL;
+        terminals[term].readBlockedPCBs.firstPCB = NULL;
+        terminals[term].readBlockedPCBs.lastPCB = NULL;
+        terminals[term].writeBlockedPCBs.firstPCB = NULL;
+        terminals[term].writeBlockedPCBs.lastPCB = NULL;
+        terminals[term].writeActive = false;
+    }
     
     // Step 5: load idle program
     TracePrintf(10, "Loading idle program\n");
