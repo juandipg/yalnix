@@ -27,17 +27,18 @@ struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 #define STATUS_TERMINAL_BLOCKED 5
 
 typedef struct PCB PCB;
-typedef struct child child;
+//typedef struct child child;
 typedef struct ExitStatus ExitStatus;
 typedef struct FreePage FreePage;
 typedef struct PTFreePage PTFreePage;
 typedef struct PCBQueue PCBQueue;
 typedef struct ExitStatusQueue ExitStatusQueue;
 
-struct child {
-    PCB * pcb;
-    child * sibling;
-};
+//struct child {
+//    PCB * pcb;
+//    child * next;
+//    child * prev;
+//};
 
 struct ExitStatus {
     int status;
@@ -55,7 +56,9 @@ struct PCB {
     int userStackVPN;
     int status;
     int exitStatus;
-    child * firstChild;
+    PCB * firstChild;
+    PCB * nextSibling;
+    PCB * prevSibling;
     PCB * parent;
     ExitStatusQueue *childExitStatuses;
 };

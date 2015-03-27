@@ -404,10 +404,14 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->firstChild = NULL;
     childPCB->status = STATUS_READY;
     
-    child *newChild = malloc(sizeof(child));
-    newChild->pcb = childPCB;
-    newChild->sibling = currentPCB->firstChild;   
-    currentPCB->firstChild = newChild;
+    if (currentPCB->firstChild != NULL) {
+        currentPCB->firstChild->prevSibling = childPCB;
+    }
+    childPCB->prevSibling = NULL;
+    childPCB->nextSibling = currentPCB->firstChild;   
+    currentPCB->firstChild = childPCB;
+    
+    
     
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
@@ -417,14 +421,6 @@ void
 YalnixExit(int status)
 {
     TracePrintf(1, "YalnixExit\n");
-    // For each child in the current PCB, set its parent pointer to NULL
-    child *currentChild = currentPCB->firstChild;
-    TracePrintf(1, "1!\n");
-    while (currentChild != NULL) {
-        TracePrintf(1, "2\n");
-        currentChild->pcb->parent = NULL;
-        currentChild = currentChild->sibling;
-    }
     
     // Free the exit statuses for this process
     TracePrintf(1, "3\n");
@@ -452,6 +448,20 @@ YalnixExit(int status)
         ExitStatus *exitStatus = malloc(sizeof(ExitStatus));
         exitStatus->pid = currentPCB->pid;
         exitStatus->status = status;
+        
+        // remove current process from parent's linked list of children
+        PCB *nextSibling = currentPCB->nextSibling;
+        PCB *prevSibling = currentPCB->prevSibling;
+        if (nextSibling != NULL) {
+            nextSibling->prevSibling = prevSibling;
+        }
+        if (prevSibling != NULL) {
+            prevSibling->nextSibling = nextSibling;
+        } else {
+            currentPCB->parent->firstChild = nextSibling;
+        }
+        
+        
         addExitStatusToEndOfQueue(exitStatus, currentPCB->parent->childExitStatuses);
     }
     
@@ -488,6 +498,8 @@ YalnixWait(int *status_ptr)
         if (nextReadyProc == NULL) {
             nextReadyProc = idlePCB;
         }
+       
+        
         TracePrintf(1, "about to context switch to process: %d\n", nextReadyProc->pid);
         ContextSwitch(
                 yalnixContextSwitch, 
@@ -785,12 +797,6 @@ destroyProcess(PCB *proc)
     // first, free the page table
     freePTMemory(proc->pageTable);
     
-    child *currentChild = proc->firstChild;
-    while (currentChild != NULL) {
-        free(currentChild);
-        currentChild = currentChild->sibling;
-    }
-    
     // then, free the pcb
     free(proc);
 }
@@ -980,6 +986,8 @@ KernelStart(ExceptionStackFrame *frame,
     initPCB->childExitStatuses->lastExitStatus = NULL;
     initPCB->firstChild = NULL;
     initPCB->status = STATUS_READY;
+    initPCB->nextSibling = NULL;
+    initPCB->prevSibling = NULL;
     
     //allocate process queues
     readyQueue = malloc(sizeof(PCBQueue));
