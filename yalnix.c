@@ -525,7 +525,9 @@ YalnixWait(int *status_ptr)
     // return the status of that dead child
     ExitStatus *firstDeadChild = removeExitStatusFromFrontOfQueue(currentPCB->childExitStatuses);
     *status_ptr = firstDeadChild->status;
-    return firstDeadChild->pid;
+    int pid = firstDeadChild->pid;
+    free(firstDeadChild);
+    return pid;
 }
 
 struct pte *
@@ -565,8 +567,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
         TracePrintf(10, "not enough memory to fork. required pages = %d, "
                 "available pages = %d \n", reqdPageCount, availPages);
         frame->regs[0] = ERROR;
-        // TODO: free the memory being used by childPCB, and the page table
-        
+        destroyProcess(childPCB);
         return ctx;
     }
     
@@ -797,7 +798,8 @@ TrapMemory(ExceptionStackFrame *frame)
     // executing process, grow the user stack by enough pages
     if (((long)addr < USER_STACK_LIMIT) &&
             (addrVPN < currentPCB->userStackVPN) &&
-            (addrVPN > currentPCB->brkVPN - 1)) {
+            (addrVPN > currentPCB->brkVPN - 1)) 
+    {
         
         struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
         int vpnStart = currentPCB->userStackVPN - numPagesNeeded;
@@ -810,11 +812,9 @@ TrapMemory(ExceptionStackFrame *frame)
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
         currentPCB->userStackVPN -= numPagesNeeded;
-    }
-    
-    // else, terminate the currently running process, and context switch
-    // to next process
-    else {
+    } else {
+        // else, terminate the currently running process, and context switch
+        // to next process
         PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
         if (nextReadyProc == NULL) {
             nextReadyProc = idlePCB;
@@ -829,10 +829,13 @@ TrapMemory(ExceptionStackFrame *frame)
 void
 destroyProcess(PCB *proc) 
 {
-    // first, free the page table
+    // free the page table
     freePTMemory(proc->pageTable);
     
-    // then, free the pcb
+    // free the exit status queue
+    free(proc->childExitStatuses);
+    
+    // free the pcb
     free(proc);
 }
 
