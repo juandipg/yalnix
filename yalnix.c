@@ -6,6 +6,8 @@
 #include "stdint.h"
 #include "yalnix.h"
 
+#define USEDPTE 0x80000000
+
 void * vector_table[TRAP_VECTOR_SIZE];
 struct pte *region1PageTable;
 
@@ -68,6 +70,7 @@ allocatePage()
 void
 freePage(int pfn)
 {
+    TracePrintf(1, "ADDING PFN: %d TO FULL FREE PAGE LIST\n", pfn);
     // insert the freePage into the list
     // map the pfn to the topR1PagePointer
     topR1PTE->pfn = pfn;
@@ -105,7 +108,7 @@ allocatePTMemory()
         // free half page list is empty
         // allocate a new page of physical memory, get the physical address
         int pfn = allocatePage();
-        TracePrintf(1, "pfn inside allocatePTMemory = %d\n", pfn);
+        TracePrintf(1, "ALLOCATING BOTTOM HALF OF PFN: %d \n", pfn);
         physicalAddr = (void *) ((long)pfn * PAGESIZE);
         
         topR1PTE->pfn = pfn;
@@ -114,13 +117,19 @@ allocatePTMemory()
         
         // update the list of half pages with the other half of the page
         // we just allocated
-        TracePrintf(1, "Adding a free page to the half-page list\n");
-        topHalf->isFull = false;
+        TracePrintf(10, "Adding a free page to the half-page list\n");
+        TracePrintf(1, "ADDING TOP HALF OF PFN TO LIST: %d \n", pfn);
+        topHalf->free = USEDPTE;
+        TracePrintf(1, "top half-> free = %d\n", topHalf->free);
+        struct pte *potentialPTE = (struct pte *)topHalf;
+        TracePrintf(1, "valid = %d, pfn = %d, kprot = %d, uprot = %d\n",
+                    potentialPTE->valid, potentialPTE->pfn, potentialPTE->kprot, potentialPTE->uprot);
         topHalf->next = NULL;
         topHalf->prev = NULL;
         firstHalfPage = physicalAddr + PAGE_TABLE_SIZE;
     } else {
-        TracePrintf(1, "Removing a free page from the half-page list\n");
+        TracePrintf(10, "Removing a free page from the half-page list\n");
+        TracePrintf(1, "REMOVING HALF PAGE FROM HALF PAGE LIST WITH PFN: %d \n", (DOWN_TO_PAGE(firstHalfPage) / PAGESIZE));
         physicalAddr = firstHalfPage;
         // get the virtual address corresponding to that physical address
         struct PTFreePage *freeHalfPage = (PTFreePage *)getVirtualAddress(physicalAddr, otherR0PageTableVirtualPointer);
@@ -136,20 +145,27 @@ void
 freePTMemory(void *pageTablePhysicalAddress)
 {
     TracePrintf(1, "Freeing page table memory\n");
+    
+    TracePrintf(1, "FREEING PAGE TABLE MEMORY FOR PFN: %d\n", DOWN_TO_PAGE(pageTablePhysicalAddress) / PAGESIZE);
     struct pte *pageTable = getVirtualAddress(pageTablePhysicalAddress, otherR0PageTableVirtualPointer);
     
     // figure out if you're on the top or the middle
     void *otherPage = (void *)DOWN_TO_PAGE(pageTable);
     
     if (otherPage == pageTable) {
-        TracePrintf(1, "Other page is the top one\n");
+        TracePrintf(1, "OTHER PAGE IS THE TOP ONE\n");
         otherPage = (char *)pageTable + (PAGESIZE / 2);
     }
-    
+    else {
+        TracePrintf(1, "OTHER PAGE IS THE BOTTOM ONE\n");
+    }
     PTFreePage *freeOtherPage = (PTFreePage *)otherPage;
+    struct pte *potentialPTE = (struct pte *)otherPage;
+    TracePrintf(1, "valid = %d, pfn = %d, kprot = %d, uprot = %d\n",
+                    potentialPTE->valid, potentialPTE->pfn, potentialPTE->kprot, potentialPTE->uprot);
     
     // first check to see if matching half is in the list of free half-pages
-    if (!freeOtherPage->isFull) {
+    if (freeOtherPage->free == USEDPTE) {
         TracePrintf(1, "The other page is free. About to take it out of linked free half page list\n");
         // if it is, remove it from the free half-pages list
         // TODO: Factor this out-- have addFreePageToList and removeFreePageFromList(page)
@@ -169,18 +185,20 @@ freePTMemory(void *pageTablePhysicalAddress)
         
         freePage(DOWN_TO_PAGE(pageTablePhysicalAddress) / PAGESIZE);
     } else {
+        PTFreePage *freePage = (PTFreePage *)pageTable;
         TracePrintf(1, "The other half page was full, about to add this page to the list\n");
         // else, add the half-page to the list of free half-pages
-        freeOtherPage->isFull = false;
-        freeOtherPage->next = firstHalfPage;
-        freeOtherPage->prev = NULL;
-        firstHalfPage = pageTablePhysicalAddress;
-        if (firstHalfPage->next != NULL) {
-            TracePrintf(1, "List was nonempty\n");
-            PTFreePage *next = (PTFreePage *)getVirtualAddress(freeOtherPage->next, currentR0PageTableVirtualPointer);
+        freePage->free = USEDPTE;
+        freePage->next = firstHalfPage;
+        freePage->prev = NULL;
+        
+        if (freePage->next != NULL) {
+            TracePrintf(10, "List was nonempty\n");
+            PTFreePage *next = (PTFreePage *)getVirtualAddress(freePage->next, currentR0PageTableVirtualPointer);
             next->prev = pageTablePhysicalAddress;
         }
-        TracePrintf(1, "successfull added page\n");
+        firstHalfPage = pageTablePhysicalAddress;
+        TracePrintf(10, "successfull added page\n");
     }
 }
 
@@ -222,7 +240,7 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     WriteRegister(REG_PTR0, (RCS421RegVal) initPCB->pageTable);
     
     // Step 3: flush TLB
-    TracePrintf(1, "About to flush TLB in startInit\n");
+    TracePrintf(10, "About to flush TLB in startInit\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // Step 4: call LoadProgram(init)
@@ -287,7 +305,7 @@ YalnixExec(char *filename, char **argvec, ExceptionStackFrame *frame)
 int
 YalnixDelay(int clock_ticks)
 {
-    TracePrintf(1, "clock ticks passed to YalnixDelay = %d\n", clock_ticks);
+    TracePrintf(10, "clock ticks passed to YalnixDelay = %d\n", clock_ticks);
     requestedClockTicks = clock_ticks;
     if (clock_ticks < 0) {
         return ERROR;
@@ -313,8 +331,8 @@ YalnixBrk(void *addr)
 {
     //TODO: can any of this be factored out?
     
-    TracePrintf(1, "YalnixBrk\n");
-    TracePrintf(1, "Addr passed to yalnixBrk = %p\n", addr);
+    TracePrintf(10, "YalnixBrk\n");
+    TracePrintf(10, "Addr passed to yalnixBrk = %p\n", addr);
     
     int addrVPN = UP_TO_PAGE(addr) / PAGESIZE;
     
@@ -325,8 +343,8 @@ YalnixBrk(void *addr)
     // the stack and the heap, and check to make sure there
     // is enough free physical memory
     if (addrVPN > (currentPCB->userStackVPN - 1) || availPages < numPagesNeeded) {
-        TracePrintf(1, "Invalid call to YalnixBrk with address %p\n", addr);
-        TracePrintf(1, "numPagesNeeded = %d | availPages = %d\n", 
+        TracePrintf(10, "Invalid call to YalnixBrk with address %p\n", addr);
+        TracePrintf(10, "numPagesNeeded = %d | availPages = %d\n", 
                 numPagesNeeded, availPages);
         return -1;
     }
@@ -334,7 +352,7 @@ YalnixBrk(void *addr)
     int vpnStart = currentPCB->brkVPN + 1;
     if (numPagesNeeded < 0) {
         // free the pages
-        TracePrintf(1, "freeing %d pages in yalnixBrk\n", numPagesNeeded);
+        TracePrintf(10, "freeing %d pages in yalnixBrk\n", numPagesNeeded);
         int vpn;
         for (vpn = vpnStart; vpn > vpnStart + numPagesNeeded; vpn--) {
             freeVirtualPage(vpn, currentPCB->pageTable);
@@ -343,7 +361,7 @@ YalnixBrk(void *addr)
         
     } else {
         //allocate pages
-        TracePrintf(1, "allocating %d pages in yalnixBrk\n", numPagesNeeded);
+        TracePrintf(10, "allocating %d pages in yalnixBrk\n", numPagesNeeded);
         struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
         int vpn;
         for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
@@ -355,7 +373,7 @@ YalnixBrk(void *addr)
         }
     }
     currentPCB->brkVPN += numPagesNeeded;
-    TracePrintf(1, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
+    TracePrintf(10, "done allocating memory. new PCB brkVPN = %d\n", currentPCB->brkVPN);
     
     return 0;
 }
@@ -363,7 +381,7 @@ YalnixBrk(void *addr)
 void
 YalnixFork(ExceptionStackFrame *frame)
 {
-    TracePrintf(1, "yalnixfork\n");
+    TracePrintf(10, "yalnixfork\n");
     
     // create a new PCB for the new process
     PCB *childPCB = malloc(sizeof(PCB));
@@ -384,6 +402,11 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->childExitStatuses->firstExitStatus = NULL;
     childPCB->childExitStatuses->lastExitStatus = NULL;
     childPCB->firstChild = NULL;
+    childPCB->status = STATUS_READY;
+    
+    currentPCB->firstChild = malloc(sizeof(child));
+    currentPCB->firstChild->pcb = childPCB;
+    currentPCB->firstChild->sibling = NULL;
     
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
@@ -395,24 +418,40 @@ YalnixExit(int status)
     TracePrintf(1, "YalnixExit\n");
     // For each child in the current PCB, set its parent pointer to NULL
     child *currentChild = currentPCB->firstChild;
+    TracePrintf(1, "1!\n");
     while (currentChild != NULL) {
+        TracePrintf(1, "2\n");
         currentChild->pcb->parent = NULL;
         currentChild = currentChild->sibling;
+    }
+    
+    // Free the exit statuses for this process
+    TracePrintf(1, "3\n");
+    ExitStatus *currentExitStatus = currentPCB->childExitStatuses->firstExitStatus;
+    while (currentExitStatus != NULL) {
+        TracePrintf(1, "4\n");
+        ExitStatus *next = currentExitStatus->next;
+        free(currentExitStatus);
+        currentExitStatus = next;
     }
     
     // If the current PCB has a parent, check it's parent's status
     // If the parent is waiting:
     //  1. move the parent from the blocked queue to the ready queue
     //  2. Add a new childStatus to the parent's FIFO dead child queue
+    TracePrintf(1, "5\n");
     if (currentPCB->parent != NULL) {
-        if (currentPCB->parent->status == BLOCKED) {
+        TracePrintf(1, "6\n");
+        if (currentPCB->parent->status == STATUS_WAIT_BLOCKED) {
+            TracePrintf(1, "PARENT WAS WAIT BLOCKED!\n");
             removePCBFromQueue(blockedQueue, currentPCB->parent);
+            currentPCB->parent->status = STATUS_READY;
             addProcessToEndOfQueue(currentPCB->parent, readyQueue);
-            ExitStatus *exitStatus = malloc(sizeof(ExitStatus));
-            exitStatus->pid = currentPCB->pid;
-            exitStatus->status = status;
-            addExitStatusToEndOfQueue(exitStatus, currentPCB->parent->childExitStatuses);
         }
+        ExitStatus *exitStatus = malloc(sizeof(ExitStatus));
+        exitStatus->pid = currentPCB->pid;
+        exitStatus->status = status;
+        addExitStatusToEndOfQueue(exitStatus, currentPCB->parent->childExitStatuses);
     }
     
     // Context switch using the destroyAndContextSwitch function
@@ -426,27 +465,36 @@ YalnixExit(int status)
 int
 YalnixWait(int *status_ptr)
 {
-    (void)status_ptr;
     // return ERROR if curernt process has no child processes 
-    if (currentPCB->childExitStatuses == NULL && currentPCB->firstChild == NULL) {
+    TracePrintf(1, "Inside yalnix wait\n");
+    if (currentPCB->childExitStatuses->firstExitStatus == NULL && currentPCB->firstChild == NULL) {
+        TracePrintf(1, "Inside yalnix wait going to return error\n");
         return ERROR;
     }
+    TracePrintf(1, "Checking if current process's child exit status queue is empty\n");
     // If the current process's dead child queue is empty:
-    if  (currentPCB->childExitStatuses == NULL) {
+    if  (currentPCB->childExitStatuses->firstExitStatus == NULL) {
+        
         // Move the current PCB to the blocked queue
+        currentPCB->status = STATUS_WAIT_BLOCKED;
+        TracePrintf(1, "WAIT: ADDING PROC TO BLOCKED QUEUE %d\n", currentPCB->pid);
         addProcessToEndOfQueue(currentPCB, blockedQueue);
         
         // Context switch to next ready process using yalnixContextSwitch function
+        TracePrintf(1, "WAIT: REMOVING PROC FROM READY QUEUE\n");
         PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
+        TracePrintf(1, "WAIT: REMOVED PROC'S PID IS: %d\n", nextReadyProc->pid);
         if (nextReadyProc == NULL) {
             nextReadyProc = idlePCB;
         }
+        TracePrintf(1, "about to context switch to process: %d\n", nextReadyProc->pid);
         ContextSwitch(
                 yalnixContextSwitch, 
                 &currentPCB->savedContext, 
                 currentPCB, nextReadyProc);
     }
     
+    TracePrintf(1, "child exit status queue is not empty\n");
     // Take first dead child off the parent's dead child queue and 
     // return the status of that dead child
     ExitStatus *firstDeadChild = removeExitStatusFromFrontOfQueue(currentPCB->childExitStatuses);
@@ -458,15 +506,15 @@ struct pte *
 getVirtualAddress(void *physicalAddr, void *pageVirtualAddr)
 {
     int vpn = (long) (pageVirtualAddr - VMEM_1_BASE) / PAGESIZE;
-    TracePrintf(1, "vpn inside getVirtualAddress = %d\n", vpn);
+    TracePrintf(10, "vpn inside getVirtualAddress = %d\n", vpn);
     region1PageTable[vpn].valid = 1;
     region1PageTable[vpn].pfn = DOWN_TO_PAGE(physicalAddr) / PAGESIZE;
     region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
     region1PageTable[vpn].uprot = 0;
     WriteRegister(REG_TLB_FLUSH, (RCS421RegVal)pageVirtualAddr);
     
-    TracePrintf(1, "about to return virtual address: %p\n", (void *)(((char*)pageVirtualAddr + ((long) physicalAddr & PAGEOFFSET))));
-    TracePrintf(1, "page offset = %d\n", (long) physicalAddr & PAGEOFFSET);
+    TracePrintf(10, "about to return virtual address: %p\n", (void *)(((char*)pageVirtualAddr + ((long) physicalAddr & PAGEOFFSET))));
+    TracePrintf(10, "page offset = %d\n", (long) physicalAddr & PAGEOFFSET);
     return (struct pte *) (((char*)pageVirtualAddr + ((long) physicalAddr & PAGEOFFSET)));
 }
 
@@ -488,7 +536,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
         reqdPageCount += currentPageTable[vpn].valid;
     }
     if (reqdPageCount > availPages) {
-        TracePrintf(1, "not enough memory to fork. required pages = %d, "
+        TracePrintf(10, "not enough memory to fork. required pages = %d, "
                 "available pages = %d \n", reqdPageCount, availPages);
         frame->regs[0] = ERROR;
         // TODO: free the memory being used by childPCB, and the page table
@@ -510,7 +558,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
         }
     }
     
-    TracePrintf(1, "flushing to see what happens (Again)\n");
+    TracePrintf(10, "flushing to see what happens (Again)\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // switch to region 0 page table of new process and flush TLB
@@ -518,8 +566,8 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     
     PageTableSanityCheck(10, 10, currentPageTable);
     
-    TracePrintf(1, "child pcb r0 page table is at %p\n", childPageTable);
-    TracePrintf(1, "flushing r0 tlb now\n");
+    TracePrintf(10, "child pcb r0 page table is at %p\n", childPageTable);
+    TracePrintf(10, "flushing r0 tlb now\n");
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     // return value for the child
@@ -531,7 +579,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     // set current process to child
     currentPCB = childPCB;
     
-    TracePrintf(1, "done cloning process\n");
+    TracePrintf(10, "done cloning process\n");
     
     // return;
     return ctx;
@@ -557,10 +605,12 @@ addProcessToEndOfQueue(PCB *pcb, PCBQueue *queue)
 {
     // if the queue is empty
     if (queue->firstPCB == NULL) {
+        TracePrintf(1, "Adding process %d to end of empty queue\n", pcb->pid);
         pcb->nextProc = NULL;
         queue->lastPCB = pcb;
         queue->firstPCB = pcb;
     } else {    // if the queue is nonempty
+        TracePrintf(1, "Adding process %d to end of NONempty queue\n", pcb->pid);
         queue->lastPCB->nextProc = pcb;
         pcb->prevProc = queue->lastPCB;
         queue->lastPCB = pcb;
@@ -590,10 +640,13 @@ removePCBFromFrontOfQueue(PCBQueue *queue)
         return NULL;
     }
     if (queue->firstPCB->nextProc == NULL) {
+        TracePrintf(1, "Removing only proc from front of queue\n");
         queue->lastPCB = NULL;
     }
+    
     queue->firstPCB->prevProc = NULL;
     queue->firstPCB = queue->firstPCB->nextProc;
+    TracePrintf(1, "process removed was: %d\n", firstPCB->pid);
     return firstPCB;
 }
 
@@ -646,9 +699,10 @@ TrapClock(ExceptionStackFrame *frame)
     //Get the next process to switch to, and if it's not null, switch to it
     PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
     
+    
     if (nextReadyProc != NULL) {
-        TracePrintf(0, "Going to context switch to process %d \n", nextReadyProc->pid);
         // add pcb1 back onto ready queue
+        TracePrintf(1, "Context switching in trap clock\n");
         addProcessToEndOfQueue(currentPCB, readyQueue);
         ContextSwitch(
                 yalnixContextSwitch, 
@@ -682,7 +736,7 @@ void
 TrapMemory(ExceptionStackFrame *frame)
 {
     TracePrintf(0, "trapmemory\n");
-    TracePrintf(1, "Address causing trapmem = %p\n", frame->addr);
+    TracePrintf(10, "Address causing trapmem = %p\n", frame->addr);
     void *addr = frame->addr;
     
     int addrVPN = DOWN_TO_PAGE(addr) / PAGESIZE;
@@ -719,7 +773,7 @@ TrapMemory(ExceptionStackFrame *frame)
         }
         
         // TODO: Print an error message with the pid and an explanation
-        TracePrintf(1, "About to destroy process #%d because there wasn't enough memory!\n", currentPCB->pid);
+        TracePrintf(10, "About to destroy process #%d because there wasn't enough memory!\n", currentPCB->pid);
         ContextSwitch (destroyAndContextSwitch, &currentPCB->savedContext, currentPCB, nextReadyProc);
     }
 }
@@ -790,13 +844,13 @@ KernelStart(ExceptionStackFrame *frame,
     idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
 
     
-    TracePrintf(1, "Address of idlePCB after malloc: %p\n", idlePCB);
+    TracePrintf(10, "Address of idlePCB after malloc: %p\n", idlePCB);
 
     region1PageTable = malloc(PAGE_TABLE_SIZE);
     
     topR1PTE = &region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1];
     
-    TracePrintf(1, "Done assigning topR1PTE, etc\n");
+    TracePrintf(10, "Done assigning topR1PTE, etc\n");
     
     
     //WARNING: do not make any malloc calls past this 
@@ -818,7 +872,7 @@ KernelStart(ExceptionStackFrame *frame,
         availPages++;
     }
     
-    TracePrintf(1, "page %p but page + PAGESIZE %p\n", page, page + PAGESIZE);
+    TracePrintf(10, "page %p but page + PAGESIZE %p\n", page, page + PAGESIZE);
     
     // second one, from orig_brk to pmem_size
     // pmem_size is in bytes, which conveniently is the smallest
@@ -834,7 +888,7 @@ KernelStart(ExceptionStackFrame *frame,
         availPages++;
     }
     
-    TracePrintf(1, "availPages = %d | pmem_size = %d\n", availPages, pmem_size);
+    TracePrintf(10, "availPages = %d | pmem_size = %d\n", availPages, pmem_size);
     
     // Step 3: Build page tables for Region 1 and Region 0
     //build R1 page table
@@ -851,7 +905,7 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
-    TracePrintf(1, "adding PTEs for kernel data/bss/heap\n");
+    TracePrintf(10, "adding PTEs for kernel data/bss/heap\n");
     //Add PTEs for kernel data/bss/heap
     for (; vpn < (long) (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE)/ PAGESIZE; vpn++) {
         TracePrintf(4, "vpn = %d, pfn = %d\n", vpn, pfn);
@@ -862,14 +916,14 @@ KernelStart(ExceptionStackFrame *frame,
         pfn++;
     }
     
-    TracePrintf(1, "adding invalid ptes\n");
+    TracePrintf(10, "adding invalid ptes\n");
     //Add invalid PTEs for the rest of memory in R1
     for (; vpn < VMEM_1_SIZE / PAGESIZE; vpn++) {
         region1PageTable[vpn].valid = 0;
         pfn++;
     }
     
-    TracePrintf(1, "initializing ad-hoc page in R1\n");
+    TracePrintf(10, "initializing ad-hoc page in R1\n");
     //Initialize the ad-hoc page in R1 to PROT_READ | PROT_WRITE
     topR1PTE->valid = 1;
     topR1PTE->kprot = PROT_WRITE | PROT_READ;
@@ -880,7 +934,7 @@ KernelStart(ExceptionStackFrame *frame,
     // the pfn is allocated for new processes
     // but not for this special case
     // (here we have to make them the same as virtual pages)
-    TracePrintf(1, "building r0 page table now\n");
+    TracePrintf(10, "building r0 page table now\n");
     pfn = VMEM_0_BASE / PAGESIZE;
     for (vpn = 0; vpn < KERNEL_STACK_BASE / PAGESIZE; vpn++) {
         idlePCB->pageTable[vpn].valid = 0;
@@ -897,14 +951,14 @@ KernelStart(ExceptionStackFrame *frame,
     }
     
     // tell hardware where the page tables are
-    TracePrintf(1, "telling HW where the two page tables are\n");
+    TracePrintf(10, "telling HW where the two page tables are\n");
     WriteRegister(REG_PTR0, (RCS421RegVal) idlePCB->pageTable);
     WriteRegister(REG_PTR1, (RCS421RegVal) region1PageTable);
     
     PageTableSanityCheck(10, 10, idlePCB->pageTable);
     
     // Step 4: Switch on virtual memory
-    TracePrintf(1, "enabling virtual memory\n");
+    TracePrintf(10, "enabling virtual memory\n");
     WriteRegister(REG_VM_ENABLE, 1);
     virtualMemoryEnabled = 1;
     
@@ -918,6 +972,7 @@ KernelStart(ExceptionStackFrame *frame,
     initPCB->childExitStatuses->firstExitStatus = NULL;
     initPCB->childExitStatuses->lastExitStatus = NULL;
     initPCB->firstChild = NULL;
+    initPCB->status = STATUS_READY;
     
     //allocate process queues
     readyQueue = malloc(sizeof(PCBQueue));
@@ -928,7 +983,7 @@ KernelStart(ExceptionStackFrame *frame,
     blockedQueue->lastPCB = NULL;
     
     // Step 5: load idle program
-    TracePrintf(1, "Loading idle program\n");
+    TracePrintf(10, "Loading idle program\n");
     char * args[2];
     char *name = "idle";
     args[0] = name;
@@ -950,7 +1005,7 @@ int
 SetKernelBrk(void *addr)
 {
     TracePrintf(0, "setkernerlbrk\n");
-    TracePrintf(1, "current kernel_brk is %p\n", kernel_brk);
+    TracePrintf(10, "current kernel_brk is %p\n", kernel_brk);
     
     if (!virtualMemoryEnabled) {
         // Check to make sure there is enough available memory
@@ -962,7 +1017,7 @@ SetKernelBrk(void *addr)
         kernel_brk = addr;
         
     } else { 
-        TracePrintf(1, "virtual memory enabled setkernelbrk\n");
+        TracePrintf(10, "virtual memory enabled setkernelbrk\n");
         // Calculate the number of pages needed
         int numPagesNeeded = (UP_TO_PAGE(addr) - UP_TO_PAGE(kernel_brk)) / PAGESIZE;
         
@@ -973,7 +1028,7 @@ SetKernelBrk(void *addr)
         int vpnStart = (UP_TO_PAGE(kernel_brk) - VMEM_1_BASE) / PAGESIZE;
         int vpn;
         for (vpn = vpnStart; vpn < vpnStart + numPagesNeeded; vpn++) {
-            TracePrintf(1, "allocating page in R1 for vpn = %d\n", vpn);
+            TracePrintf(10, "allocating page in R1 for vpn = %d\n", vpn);
             region1PageTable[vpn].kprot = PROT_READ | PROT_WRITE;
             region1PageTable[vpn].uprot = 0;
             region1PageTable[vpn].valid = 1;
@@ -981,7 +1036,7 @@ SetKernelBrk(void *addr)
         }
         kernel_brk = addr;
     }
-    TracePrintf(1, "kernel_brk is now %p\n", kernel_brk);
+    TracePrintf(10, "kernel_brk is now %p\n", kernel_brk);
     return 0;
 }
 
@@ -1011,8 +1066,8 @@ virtualToPhysicalR1(void * virtualAddress)
     int vpn = DOWN_TO_PAGE(virtualAddress - VMEM_1_BASE) / PAGESIZE;
     int pfn = region1PageTable[vpn].pfn;
     void *physAddr = (void *) ((pfn * PAGESIZE) | ((long)virtualAddress & PAGEOFFSET));
-    TracePrintf(1, "vpn: %d, pfn: %d\n", vpn, pfn);
-    TracePrintf(1, "page-aligned phys addr: %p\n", (void *) (long) (pfn * PAGESIZE));
-    TracePrintf(1, "virtual addr: %p, physical addr: %p\n", virtualAddress, physAddr);
+    TracePrintf(10, "vpn: %d, pfn: %d\n", vpn, pfn);
+    TracePrintf(10, "page-aligned phys addr: %p\n", (void *) (long) (pfn * PAGESIZE));
+    TracePrintf(10, "virtual addr: %p, physical addr: %p\n", virtualAddress, physAddr);
     return physAddr;
 }

@@ -20,9 +20,11 @@ void * virtualToPhysicalR1(void * virtualAddress);
 struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 
 // different status codes for a process
-#define RUNNING 1
-#define READY   2
-#define BLOCKED 3
+#define STATUS_RUNNING 1
+#define STATUS_READY   2
+#define STATUS_WAIT_BLOCKED 3
+#define STATUS_DELAY_BLOCKED 4
+#define STATUS_TERMINAL_BLOCKED 5
 
 typedef struct PCB PCB;
 typedef struct child child;
@@ -63,7 +65,7 @@ struct FreePage {
 };
 
 struct PTFreePage {
-    bool isFull;
+    unsigned int free : 32;
     PTFreePage *next;
     PTFreePage *prev;
 };
