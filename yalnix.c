@@ -32,6 +32,8 @@ int currentProcClockTicks = 0;
 int requestedClockTicks = 0;
 int nextPid = 0;
 
+bool shouldSwitch = false;
+
 bool virtualMemoryEnabled = false;
 void *kernel_brk;
 int global_pmem_size;
@@ -720,9 +722,7 @@ TrapClock(ExceptionStackFrame *frame)
     currentProcClockTicks++;
     TracePrintf(0, "trapclock\n");
     
-    if (currentPCB != idlePCB) {
-        addProcessToEndOfQueue(currentPCB, readyQueue);
-    }
+   
     // Loop through delay queue and move any processes that have completed their
     // delay to the ready queue
     PCB *currentDelayedPCB = delayBlockedQueue->firstPCB;
@@ -734,6 +734,14 @@ TrapClock(ExceptionStackFrame *frame)
         currentDelayedPCB = currentDelayedPCB->nextProc;
     }
     
+    if (!shouldSwitch) {
+        shouldSwitch = true;
+        return;
+    }
+    shouldSwitch = false;
+    if (currentPCB != idlePCB) {
+        addProcessToEndOfQueue(currentPCB, readyQueue);
+    }
     //Get the next process to switch to, and if it's not null, switch to it
     PCB *nextReadyProc = removePCBFromFrontOfQueue(readyQueue);
     if (nextReadyProc == NULL ) {
