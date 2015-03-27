@@ -404,9 +404,10 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->firstChild = NULL;
     childPCB->status = STATUS_READY;
     
-    currentPCB->firstChild = malloc(sizeof(child));
-    currentPCB->firstChild->pcb = childPCB;
-    currentPCB->firstChild->sibling = NULL;
+    child *newChild = malloc(sizeof(child));
+    newChild->pcb = childPCB;
+    newChild->sibling = currentPCB->firstChild;   
+    currentPCB->firstChild = newChild;
     
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
@@ -783,6 +784,12 @@ destroyProcess(PCB *proc)
 {
     // first, free the page table
     freePTMemory(proc->pageTable);
+    
+    child *currentChild = proc->firstChild;
+    while (currentChild != NULL) {
+        free(currentChild);
+        currentChild = currentChild->sibling;
+    }
     
     // then, free the pcb
     free(proc);
