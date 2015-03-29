@@ -851,6 +851,7 @@ TrapTtyReceive(ExceptionStackFrame *frame)
     
     // re-size the block of memory down to the real length
     line->buf = realloc(line->buf, len);
+    TracePrintf(0, "Adding buff to end of queue: %s\n", line->buf);
     
     addInputLineToEndOfQueue(line, &terminals[term].inputLineQueue);
     
@@ -869,11 +870,12 @@ YalnixTtyRead(int tty_id, void *buf, int len)
     if (terminals[tty_id].inputLineQueue.first == NULL) {
         // block this process
         currentPCB->status = STATUS_TERMINAL_BLOCKED;
+        TracePrintf(1, "putting process on blocked queue\n");
         addProcessToEndOfQueue(currentPCB, &terminals[tty_id].readBlockedPCBs);
         contextSwitchToNextReadyProcess();
     }
-    struct terminal t = terminals[tty_id];
-    inputLine *line = t.inputLineQueue.first;
+    struct terminal *t = &terminals[tty_id];
+    inputLine *line = t->inputLineQueue.first;
     int count = 0;
     char data = '\0'; // use a dummy character to enter the while loop
     while (data != '\n' && count < len) {
@@ -883,8 +885,15 @@ YalnixTtyRead(int tty_id, void *buf, int len)
         ((char *)buf)[count] = data;
         count++;
     }
+    line->buf = &line->buf[count];
     if (data == '\n') {
-        removeInputLineFromFrontOfQueue(&t.inputLineQueue);
+        TracePrintf(0, "Removing line from input queue\n");
+        removeInputLineFromFrontOfQueue(&t->inputLineQueue);
+    }
+    if (terminals[tty_id].inputLineQueue.first != NULL && terminals[tty_id].readBlockedPCBs.firstPCB != NULL) {
+        PCB *blockedProc = removePCBFromFrontOfQueue(&terminals[tty_id].readBlockedPCBs);
+        blockedProc->status = STATUS_READY;
+        addProcessToEndOfQueue(blockedProc, readyQueue);
     }
     return count;
 }
@@ -900,14 +909,13 @@ TrapTtyTransmit(ExceptionStackFrame *frame)
 void
 addInputLineToEndOfQueue(inputLine *line, lineQueue *queue) 
 {
+    line->next = NULL;
     if (queue->first == NULL) {
-        line->next = NULL;
         queue->last = line;
         queue->first = line;
     } else {    // if the queue is nonempty
         queue->last->next = line;
-        line->next = NULL;
-        queue->first = line;
+        queue->last = line;
     }
 }
 
@@ -919,8 +927,10 @@ removeInputLineFromFrontOfQueue(lineQueue *queue) {
     }
     if (queue->first->next == NULL) {
         queue->last = NULL;
+        queue->first = NULL;
+    } else {
+        queue->first = queue->first->next;
     }
-    queue->first = queue->first->next;
     return first;
 }
 

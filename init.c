@@ -6,10 +6,11 @@
 int
 main(int argc, char **argv)
 {
-    (void) argc;
-    TracePrintf(1, "name: %s\n", argv[0]);
-    TracePrintf(1, "param1: %s\n", argv[1]);
-    TracePrintf(1, "param2: %s\n", argv[2]);
+    (void)argc;
+    (void)argv;
+//    TracePrintf(1, "name: %s\n", argv[0]);
+//    TracePrintf(1, "param1: %s\n", argv[1]);
+//    TracePrintf(1, "param2: %s\n", argv[2]);
 
 //    int pid = Fork();
 //    if (pid == 0) {
@@ -32,9 +33,20 @@ main(int argc, char **argv)
 //        for (;;) {
 //        }
 //    }
-    char *buf[10];
-    TtyRead(1, buf, 9);
-    buf[10] = '\0';
-    TracePrintf(1, "got from terminal: %s\n", buf);
+    int pid = Fork();
+    TracePrintf(1, "pid : %d about to get blocked\n", pid);
+    if (pid == 0) {
+        char *buf[3];
+        
+        TtyRead(1, buf, 2);
+        buf[3] = '\0';
+        TracePrintf(1, "child got from terminal: %s\n", buf);
+    } else {
+        Delay(2);
+        char *buf2[10];
+        TtyRead(2, buf2, 9);
+        buf2[10] = '\0';
+        TracePrintf(1, "parent got from terminal: %s\n", buf2);
+    }
     return 0;
 }
