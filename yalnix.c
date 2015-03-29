@@ -12,6 +12,8 @@
 void * vector_table[TRAP_VECTOR_SIZE];
 struct pte *region1PageTable;
 
+int numProcs = 0;
+
 // linked list of free pages
 int availPages = 0;
 struct FreePage * firstFreePage = NULL;
@@ -293,17 +295,22 @@ destroyAndContextSwitch (SavedContext *ctx, void *p1, void *p2)
 {
     // TODO factor out common code between two context switch functions
     (void)ctx;
-    PCB *pcb1 = (PCB *)p1; //init
-    PCB *pcb2 = (PCB *)p2; //idle
+    PCB *pcb1 = (PCB *)p1; 
+    PCB *pcb2 = (PCB *)p2; 
     
     destroyProcess(pcb1);
     
+    numProcs--;
+    if (numProcs <= 0) {
+        printf("Shutting down the kernel\n");
+        Halt();
+    }
     WriteRegister(REG_PTR0, (RCS421RegVal)pcb2->pageTable);
     
     WriteRegister(REG_TLB_FLUSH, TLB_FLUSH_0);
     
     currentPCB = pcb2;
-    return &pcb2->savedContext; //return idle's context, which will run right after
+    return &pcb2->savedContext; 
 }
 
 SavedContext *
@@ -414,6 +421,10 @@ YalnixFork(ExceptionStackFrame *frame)
     
     // create a new PCB for the new process
     PCB *childPCB = malloc(sizeof(PCB));
+    if (childPCB == NULL) {
+        frame->regs[0] = ERROR;
+        return;
+    }
     
     childPCB->pageTable = allocatePTMemory();
     
@@ -428,6 +439,10 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->nextProc = NULL;
     childPCB->prevProc = NULL;
     childPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
+    if (childPCB->childExitStatuses == NULL) {
+        frame->regs[0] = ERROR;
+        return;
+    }
     childPCB->childExitStatuses->firstExitStatus = NULL;
     childPCB->childExitStatuses->lastExitStatus = NULL;
     childPCB->firstChild = NULL;
@@ -473,6 +488,10 @@ YalnixExit(int status)
             addProcessToEndOfQueue(currentPCB->parent, readyQueue);
         }
         ExitStatus *exitStatus = malloc(sizeof(ExitStatus));
+        if (exitStatus == NULL) {
+            printf("WARNING: not enough space to store information about exit status for process with pid: %d\n", currentPCB->pid);
+        }
+        
         exitStatus->pid = currentPCB->pid;
         exitStatus->status = status;
         
@@ -607,7 +626,7 @@ CloneProcess(SavedContext *ctx, void *p1, void *p2)
     // set current process to child
     currentPCB = childPCB;
     
-    TracePrintf(10, "done cloning process\n");
+    numProcs++;
     
     // return;
     return ctx;
@@ -845,10 +864,18 @@ TrapTtyReceive(ExceptionStackFrame *frame)
     
     // allocate space for an input line
     inputLine *line = malloc(sizeof(inputLine));
+    if (line == NULL) {
+        printf("Unable to allocate memory to store line from terminal in kernel\n");
+        return;
+    }
     line->count = 0;
     
     // allocate space for a full-sized buffer
     line->buf = malloc(TERMINAL_MAX_LINE);
+    if (line->buf == NULL) {
+        printf("Unable to allocate memory to store line from terminal in kernel\n");
+        return;
+    }
     
     // read the data from the hardware
     int len = TtyReceive(term, line->buf, TERMINAL_MAX_LINE);
@@ -1072,12 +1099,24 @@ KernelStart(ExceptionStackFrame *frame,
     TracePrintf(0, "Saved addr of ivt to REG_VECTOR_BASE register\n");
     
     idlePCB = malloc(sizeof(PCB));
+    if (idlePCB == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
+    if (idlePCB->pageTable == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
 
     
     TracePrintf(10, "Address of idlePCB after malloc: %p\n", idlePCB);
 
     region1PageTable = malloc(PAGE_TABLE_SIZE);
+    if (region1PageTable == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     
     topR1PTE = &region1PageTable[(VMEM_1_SIZE / PAGESIZE) - 1];
     
@@ -1201,11 +1240,19 @@ KernelStart(ExceptionStackFrame *frame,
     
     // initialize initPCB
     initPCB = malloc(sizeof (PCB));
+    if (initPCB == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     initPCB->pageTable = allocatePTMemory();
     initPCB->nextProc = NULL;
     initPCB->prevProc = NULL;
     initPCB->parent = NULL;
     initPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
+    if (initPCB->childExitStatuses == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     initPCB->childExitStatuses->firstExitStatus = NULL;
     initPCB->childExitStatuses->lastExitStatus = NULL;
     initPCB->firstChild = NULL;
@@ -1215,12 +1262,28 @@ KernelStart(ExceptionStackFrame *frame,
     
     //allocate process queues
     readyQueue = malloc(sizeof(PCBQueue));
+    if (readyQueue == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     readyQueue->firstPCB = NULL;
+    if (readyQueue->firstPCB == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     readyQueue->lastPCB = NULL;
     waitBlockedQueue = malloc(sizeof(PCBQueue));
+    if (waitBlockedQueue == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     waitBlockedQueue->firstPCB = NULL;
     waitBlockedQueue->lastPCB = NULL;
     delayBlockedQueue = malloc(sizeof(PCBQueue));
+    if (delayBlockedQueue == NULL) {
+        printf("ERROR: Not enough memory to start kernel\n");
+        Halt();
+    }
     delayBlockedQueue->firstPCB = NULL;
     delayBlockedQueue->lastPCB = NULL;
     
@@ -1279,7 +1342,7 @@ SetKernelBrk(void *addr)
         // Calculate the number of pages needed
         int numPagesNeeded = (UP_TO_PAGE(addr) - UP_TO_PAGE(kernel_brk)) / PAGESIZE;
         
-        if (addr > topR1PagePointer || availPages < numPagesNeeded) {
+        if ((long)addr > (long)VMEM_1_LIMIT - (long)(PAGESIZE * (3 + (2 * NUM_TERMINALS))) || availPages < numPagesNeeded) {
             return -1;
         }
         
