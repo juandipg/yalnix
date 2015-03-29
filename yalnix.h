@@ -47,6 +47,8 @@ struct PCB {
     PCB * nextSibling;
     PCB * prevSibling;
     PCB * parent;
+    char * writeBuf;
+    int writeBufLen;
     ExitStatusQueue *childExitStatuses;
 };
 
@@ -71,6 +73,7 @@ struct ExitStatusQueue {
 };
 
 struct inputLine {
+    int count;
     struct inputLine *next;
     char *buf;
 };
@@ -84,7 +87,7 @@ struct terminal {
     lineQueue inputLineQueue;
     PCBQueue readBlockedPCBs;
     PCBQueue writeBlockedPCBs;
-    bool writeActive;
+    void *R1AdHocPointer;
 };
 
 int LoadProgram(char *name, char **args, ExceptionStackFrame *frame, PCB *pcb, 
@@ -112,4 +115,7 @@ struct pte * getVirtualAddress(void *physicalAddr, void *pageVirtualAddr);
 SavedContext * yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2);
 int YalnixTtyRead(int tty_id, void *buf, int len);
 void addInputLineToEndOfQueue(inputLine *line, lineQueue *queue);
-inputLine * removeInputLineFromFrontOfQueue(lineQueue *queue);
+void removeInputLineFromFrontOfQueue(lineQueue *queue);
+void terminalWriteHelper(int tty_id);
+int YalnixTtyWrite(int tty_id, void *buf, int len);
+bool checkValidBufferReadWrite(char *buf, int len, int prot);

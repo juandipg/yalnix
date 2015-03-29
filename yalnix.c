@@ -440,8 +440,6 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->nextSibling = currentPCB->firstChild;   
     currentPCB->firstChild = childPCB;
     
-    
-    
     // call CloneProcess inside ContextSwitch
     ContextSwitch(CloneProcess, &currentPCB->savedContext, childPCB, frame);
 }
@@ -723,6 +721,11 @@ TrapKernel(ExceptionStackFrame *frame)
                 (void *) frame->regs[2],
                 frame->regs[3]);
     }
+    if (frame->code == YALNIX_TTY_WRITE) {
+        frame->regs[0] = YalnixTtyWrite(frame->regs[1], 
+                (void *) frame->regs[2],
+                frame->regs[3]);
+    }
 }
 
 void
@@ -868,6 +871,10 @@ TrapTtyReceive(ExceptionStackFrame *frame)
 int
 YalnixTtyRead(int tty_id, void *buf, int len) 
 {
+    bool valid = checkValidBufferReadWrite(buf, len, PROT_WRITE | PROT_READ);
+    if (!valid) {
+        return ERROR;
+    }
     if (terminals[tty_id].inputLineQueue.first == NULL) {
         // block this process
         currentPCB->status = STATUS_TERMINAL_BLOCKED;
@@ -902,9 +909,112 @@ YalnixTtyRead(int tty_id, void *buf, int len)
 void
 TrapTtyTransmit(ExceptionStackFrame *frame)
 {
-    (void) frame;
     TracePrintf(0, "trapttytransmit\n");
-    Halt();
+    int tty_id = frame->code;
+    // Remove the first element from the write blocked queue for this terminal
+    PCB *blockedPCB = removePCBFromFrontOfQueue(&terminals[tty_id].writeBlockedPCBs);
+    blockedPCB->status = STATUS_READY;
+    
+    // Unblock the process and move to ready queue
+    addProcessToEndOfQueue(blockedPCB, readyQueue);
+    
+    // initiate write if list is not empty
+    if (terminals[tty_id].writeBlockedPCBs.firstPCB != NULL) {
+        terminalWriteHelper(tty_id);
+    }
+}
+
+/*
+ * This should only get called when HW is ready to write more
+ */
+void
+terminalWriteHelper(int tty_id) 
+{
+    TracePrintf(0, "Mapping R0 address to R1 address\n");
+    // Get first element from blocked queue (don't remove it!)
+    PCB *nextBlocked = terminals[tty_id].writeBlockedPCBs.firstPCB;
+    
+    // get PFN for that virtual address
+    struct pte *pageTable = getVirtualAddress(nextBlocked->pageTable, otherR0PageTableVirtualPointer);
+    int virtualVpn = DOWN_TO_PAGE(nextBlocked->writeBuf) / PAGESIZE;
+    int pfn = pageTable[virtualVpn].pfn;
+    
+    int nextVpn = virtualVpn + 1;
+    int pfn2 = pageTable[nextVpn].pfn;
+    
+    TracePrintf(0, "Trying to print these two vpns: %d, %d\n", virtualVpn, nextVpn);
+    
+    // map 4th ad-hoc R1 VPN to that PFN
+    int r1vpn = (DOWN_TO_PAGE(terminals[tty_id].R1AdHocPointer) - VMEM_1_BASE)/ PAGESIZE;
+    region1PageTable[r1vpn].pfn = pfn;
+    region1PageTable[r1vpn + 1].pfn = pfn2;
+    
+    WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) terminals[tty_id].R1AdHocPointer);
+    WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) terminals[tty_id].R1AdHocPointer + PAGESIZE);
+    // write to hardware using new R1 address
+    TtyTransmit(tty_id, (char *)terminals[tty_id].R1AdHocPointer + ((long)nextBlocked->writeBuf & PAGEOFFSET), nextBlocked->writeBufLen);
+    TracePrintf(0, "done with terminal write helper\n");
+}
+
+bool
+checkValidBufferReadWrite(char *buf, int len, int prot)
+{
+    if (len > TERMINAL_MAX_LINE) {
+        return false;
+    }
+    struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
+    int firstVpn = DOWN_TO_PAGE(buf) / PAGESIZE;
+    int lastVpn = (long)DOWN_TO_PAGE(buf + len) / PAGESIZE;
+    
+    if (pageTable[firstVpn].valid != 1) {
+        return false;
+    }
+    if (pageTable[lastVpn].valid != 1) {
+        return false;
+    }
+
+    if ((((pageTable[firstVpn].kprot & prot) != prot)  || ((pageTable[firstVpn].uprot & prot) != prot ))) {
+        return false;
+    }
+    if ((((pageTable[lastVpn].kprot & prot) != prot)  || ((pageTable[lastVpn].uprot & prot) != prot ))) {
+        return false;
+    }
+    return true;
+    
+}
+
+int
+YalnixTtyWrite(int tty_id, void *buf, int len)
+{
+    bool valid = checkValidBufferReadWrite(buf, len, PROT_READ);
+    if (!valid) {
+        TracePrintf(0, "About to return error from tty_write\n");
+        return ERROR;
+    }
+    // Add the output line buf to the current PCB
+    currentPCB->writeBuf = buf;
+    currentPCB->writeBufLen = len;
+    
+    if (len == 0) {
+        return 0;
+    }
+    
+    bool queueIsEmpty = (terminals[tty_id].writeBlockedPCBs.firstPCB == NULL);
+    
+    // Add the curernt PCB to the write blocked process queue for this terminal
+    currentPCB->status = STATUS_TERMINAL_BLOCKED;
+    addProcessToEndOfQueue(currentPCB, &terminals[tty_id].writeBlockedPCBs);
+    
+    // If the list of write blocked PCB's for this process is empty, initialize
+    // write
+    if (queueIsEmpty) {
+        terminalWriteHelper(tty_id);
+    }
+    
+    // Context switch away from current process
+    contextSwitchToNextReadyProcess();
+    
+    return len;
 }
 
 void
@@ -922,25 +1032,18 @@ addInputLineToEndOfQueue(inputLine *line, lineQueue *queue)
 
 void
 removeInputLineFromFrontOfQueue(lineQueue *queue) {
-    TracePrintf(0, "1\n");
     inputLine *first = queue->first;
-    TracePrintf(0, "2\n");
     if (first == NULL) {
         return;
     }
-    TracePrintf(0, "3\n");
     if (queue->first->next == NULL) {
         queue->last = NULL;
         queue->first = NULL;
     } else {
-        TracePrintf(0, "4\n");
         queue->first = queue->first->next;
     }
-    TracePrintf(0, "5\n");
     free(first->buf);
-    TracePrintf(0, "6\n");
     free(first);
-    TracePrintf(0, "7\n");
 }
 
 void
@@ -1129,7 +1232,12 @@ KernelStart(ExceptionStackFrame *frame,
         terminals[term].readBlockedPCBs.lastPCB = NULL;
         terminals[term].writeBlockedPCBs.firstPCB = NULL;
         terminals[term].writeBlockedPCBs.lastPCB = NULL;
-        terminals[term].writeActive = false;
+        terminals[term].R1AdHocPointer = (void *)VMEM_1_LIMIT - ((4 + (term*2))*PAGESIZE);
+        int r1vpn = (DOWN_TO_PAGE(terminals[term].R1AdHocPointer) - VMEM_1_BASE)/ PAGESIZE;
+        region1PageTable[r1vpn].valid = 1;
+        region1PageTable[r1vpn].kprot = PROT_WRITE | PROT_READ;
+        region1PageTable[r1vpn - 1].valid = 1;
+        region1PageTable[r1vpn - 1].kprot = PROT_WRITE | PROT_READ;
     }
     
     // Step 5: load idle program
@@ -1208,16 +1316,4 @@ PageTableSanityCheck(int r0tl, int r1tl, struct pte *r0PageTable)
                     j, region1PageTable[j].pfn, region1PageTable[j].kprot);
         }
         TracePrintf(r1tl, "PT 1 array size = %d\n", VMEM_1_SIZE / PAGESIZE);
-}
-
-void *
-virtualToPhysicalR1(void * virtualAddress)
-{
-    int vpn = DOWN_TO_PAGE(virtualAddress - VMEM_1_BASE) / PAGESIZE;
-    int pfn = region1PageTable[vpn].pfn;
-    void *physAddr = (void *) ((pfn * PAGESIZE) | ((long)virtualAddress & PAGEOFFSET));
-    TracePrintf(10, "vpn: %d, pfn: %d\n", vpn, pfn);
-    TracePrintf(10, "page-aligned phys addr: %p\n", (void *) (long) (pfn * PAGESIZE));
-    TracePrintf(10, "virtual addr: %p, physical addr: %p\n", virtualAddress, physAddr);
-    return physAddr;
 }
