@@ -842,6 +842,7 @@ TrapTtyReceive(ExceptionStackFrame *frame)
     
     // allocate space for an input line
     inputLine *line = malloc(sizeof(inputLine));
+    line->count = 0;
     
     // allocate space for a full-sized buffer
     line->buf = malloc(TERMINAL_MAX_LINE);
@@ -880,16 +881,16 @@ YalnixTtyRead(int tty_id, void *buf, int len)
     char data = '\0'; // use a dummy character to enter the while loop
     while (data != '\n' && count < len) {
         // get the data from the input buffer
-        data = line->buf[count];
+        data = line->buf[count + line->count];
         // copy it over to the user's buffer
         ((char *)buf)[count] = data;
         count++;
     }
-    line->buf = &line->buf[count];
+    line->count += count;
     if (data == '\n') {
         TracePrintf(0, "Removing line from input queue\n");
-        removeInputLineFromFrontOfQueue(&t->inputLineQueue);
-    }
+        removeInputLineFromFrontOfQueue(&t->inputLineQueue);  
+    } 
     if (terminals[tty_id].inputLineQueue.first != NULL && terminals[tty_id].readBlockedPCBs.firstPCB != NULL) {
         PCB *blockedProc = removePCBFromFrontOfQueue(&terminals[tty_id].readBlockedPCBs);
         blockedProc->status = STATUS_READY;
@@ -919,19 +920,27 @@ addInputLineToEndOfQueue(inputLine *line, lineQueue *queue)
     }
 }
 
-inputLine *
+void
 removeInputLineFromFrontOfQueue(lineQueue *queue) {
+    TracePrintf(0, "1\n");
     inputLine *first = queue->first;
+    TracePrintf(0, "2\n");
     if (first == NULL) {
-        return NULL;
+        return;
     }
+    TracePrintf(0, "3\n");
     if (queue->first->next == NULL) {
         queue->last = NULL;
         queue->first = NULL;
     } else {
+        TracePrintf(0, "4\n");
         queue->first = queue->first->next;
     }
-    return first;
+    TracePrintf(0, "5\n");
+    free(first->buf);
+    TracePrintf(0, "6\n");
+    free(first);
+    TracePrintf(0, "7\n");
 }
 
 void
