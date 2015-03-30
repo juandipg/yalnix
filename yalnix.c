@@ -367,8 +367,6 @@ YalnixGetPid(void)
 int
 YalnixBrk(void *addr)
 {
-    //TODO: can any of this be factored out?
-    
     TracePrintf(10, "YalnixBrk\n");
     TracePrintf(10, "Addr passed to yalnixBrk = %p\n", addr);
     
@@ -396,7 +394,6 @@ YalnixBrk(void *addr)
             freeVirtualPage(vpn, currentPCB->pageTable);
             WriteRegister(REG_TLB_FLUSH, (RCS421RegVal) ((long) vpn * PAGESIZE));
         }
-        
     } else {
         //allocate pages
         TracePrintf(10, "allocating %d pages in yalnixBrk\n", numPagesNeeded);
@@ -526,22 +523,22 @@ YalnixWait(int *status_ptr)
 {
     // return ERROR if curernt process has no child processes 
     TracePrintf(1, "Inside yalnix wait\n");
-    if (currentPCB->childExitStatuses->firstExitStatus == NULL && currentPCB->firstChild == NULL) {
+    if (status_ptr == NULL ||
+            (currentPCB->childExitStatuses->firstExitStatus == NULL 
+            && currentPCB->firstChild == NULL)) 
+    {
         TracePrintf(1, "Inside yalnix wait going to return error\n");
         return ERROR;
     }
     TracePrintf(1, "Checking if current process's child exit status queue is empty\n");
     // If the current process's dead child queue is empty:
     if  (currentPCB->childExitStatuses->firstExitStatus == NULL) {
-        
         // Move the current PCB to the blocked queue
         currentPCB->status = STATUS_WAIT_BLOCKED;
         TracePrintf(1, "WAIT: ADDING PROC TO BLOCKED QUEUE %d\n", currentPCB->pid);
         addProcessToEndOfQueue(currentPCB, waitBlockedQueue);
-        
         contextSwitchToNextReadyProcess();
     }
-    
     TracePrintf(1, "child exit status queue is not empty\n");
     // Take first dead child off the parent's dead child queue and 
     // return the status of that dead child
@@ -900,8 +897,12 @@ TrapTtyReceive(ExceptionStackFrame *frame)
 int
 YalnixTtyRead(int tty_id, void *buf, int len) 
 {
-    bool valid = checkValidBufferReadWrite(buf, len, PROT_WRITE | PROT_READ);
-    if (!valid) {
+    if (len == 0) {
+        return 0;
+    }
+    if (tty_id < 0 || tty_id >= NUM_TERMINALS 
+            || !checkValidBufferReadWrite(buf, len, PROT_WRITE | PROT_READ)) 
+    {
         return ERROR;
     }
     if (terminals[tty_id].inputLineQueue.first == NULL) {
@@ -988,7 +989,8 @@ terminalWriteHelper(int tty_id)
 bool
 checkValidBufferReadWrite(char *buf, int len, int prot)
 {
-    if (len > TERMINAL_MAX_LINE) {
+    if (buf == NULL || len < 0 || len > TERMINAL_MAX_LINE) 
+    {
         return false;
     }
     struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
@@ -1015,18 +1017,18 @@ checkValidBufferReadWrite(char *buf, int len, int prot)
 int
 YalnixTtyWrite(int tty_id, void *buf, int len)
 {
-    bool valid = checkValidBufferReadWrite(buf, len, PROT_READ);
-    if (!valid) {
+    if (len == 0) {
+        return 0;
+    }
+    if (tty_id < 0 || tty_id >= NUM_TERMINALS 
+            || !checkValidBufferReadWrite(buf, len, PROT_READ)) 
+    {
         TracePrintf(0, "About to return error from tty_write\n");
         return ERROR;
     }
     // Add the output line buf to the current PCB
     currentPCB->writeBuf = buf;
     currentPCB->writeBufLen = len;
-    
-    if (len == 0) {
-        return 0;
-    }
     
     bool queueIsEmpty = (terminals[tty_id].writeBlockedPCBs.firstPCB == NULL);
     

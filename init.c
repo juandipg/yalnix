@@ -39,7 +39,12 @@ main(int argc, char **argv)
         TracePrintf(1, "hello from child\n");
     } else {
         TracePrintf(1, "hello from parent\n");
-        Delay(10);
+        int status, p;
+        p = Wait(&status);
+        TracePrintf(1, "child with pid %d exited %d\n", p, status);
     }
+    int status;
+    int p = Wait(&status);
+    TracePrintf(1, "got pid %d with status %d\n", p, status);
     return 0;
 }
