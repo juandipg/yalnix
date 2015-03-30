@@ -36,17 +36,13 @@ main(int argc, char **argv)
     int pid = Fork();
     TracePrintf(1, "pid : %d about to get blocked\n", pid);
     if (pid == 0) {
-        char *buf[3];
-        
-        TtyRead(1, buf, 2);
-        buf[3] = '\0';
-        TracePrintf(1, "child got from terminal: %s\n", buf);
+        TracePrintf(1, "hello from child\n");
     } else {
-        Delay(2);
-        char *buf2[10];
-        TtyRead(2, buf2, 9);
-        buf2[10] = '\0';
-        TracePrintf(1, "parent got from terminal: %s\n", buf2);
+        TracePrintf(1, "hello from parent\n");
+        for (;;) {
+            
+        }
     }
+    TracePrintf(1, "ciao!\n");
     return 0;
 }

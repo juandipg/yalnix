@@ -286,6 +286,8 @@ startInit(SavedContext *ctx, void *frame, void *p2)
     // Step 5: return
     // idlePCB->savedContext = *ctx;
     currentPCB = initPCB;
+    
+    numProcs++;
 
     return ctx;
 }
@@ -379,10 +381,10 @@ YalnixBrk(void *addr)
     // the stack and the heap, and check to make sure there
     // is enough free physical memory
     if (addrVPN > (currentPCB->userStackVPN - 1) || availPages < numPagesNeeded) {
-        TracePrintf(10, "Invalid call to YalnixBrk with address %p\n", addr);
-        TracePrintf(10, "numPagesNeeded = %d | availPages = %d\n", 
+        TracePrintf(1, "Invalid call to YalnixBrk with address %p\n", addr);
+        TracePrintf(1, "numPagesNeeded = %d | availPages = %d\n", 
                 numPagesNeeded, availPages);
-        return -1;
+        return ERROR;
     }
     
     int vpnStart = currentPCB->brkVPN + 1;
@@ -1267,10 +1269,6 @@ KernelStart(ExceptionStackFrame *frame,
         Halt();
     }
     readyQueue->firstPCB = NULL;
-    if (readyQueue->firstPCB == NULL) {
-        printf("ERROR: Not enough memory to start kernel\n");
-        Halt();
-    }
     readyQueue->lastPCB = NULL;
     waitBlockedQueue = malloc(sizeof(PCBQueue));
     if (waitBlockedQueue == NULL) {
