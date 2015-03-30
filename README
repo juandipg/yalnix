@@ -4,7 +4,7 @@ Yalnix
 Margaret Kelley <mlk6@rice.edu>
 Juan Prado <jdp5@rice.edu>
 
-############################################################################
+##########################################################################################
 
 DATA STRUCTURES
 
@@ -61,8 +61,31 @@ Memory management
 Process management
 
 - Forking
-	In order to create a new process upon a call to Fork(), the 
+	In order to create a new process upon a call to Fork(), the existing's process's
+	valid pages are copied into new physical pages, including the kernel stack. Once
+	the cloning is done, the kernel context switches to the new process and places
+	the existing process (i.e. the parent) into the ready queue for later execution.
+
+- Exiting and shutdown
+	Using a global variable, the kernel counts the number of processes that are currently
+	running (regardless of their status, e.g. ready/blocked). Once the last process exits,
+	either normally by calling Exit() or gets terminated by the kernel, the kernel 
+	detects that 0 process are actively running, and halts the machine by calling Halt();
+
+- Wait
+	Each process has a linked list of child processes. This list is initially empty and
+	grows as processes call Fork. To return the exit code of a child to the parent, 
+	once a child returns, its exit code is added to a FIFO linked list of exit statuses 
+	in the parent. As the parent calls wait, these statuses are returned to the parent. 
+	In the case where there are running children but no exit status in the queue to 
+	return, the parent is blocked until a child exits.
+	By maintaining these lists, the kernel can service the Wait call. When a process 
+	with no children (list of children is empty) calls Wait(), the function returns 
+	ERROR. Because "orphan" processes are left without parent and are never "reaped", when
+	a process exits, the pointer to the parent PCB of all children is set to NULL. 
+	This allows the	kernel to skip storing the exit status of orphan processes.
 
 
+##########################################################################################
 
-
+Comp 421. Yalnix. 																	Rice U
