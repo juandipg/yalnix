@@ -18,8 +18,7 @@ main(int argc, char **argv)
 //        int pid2 = Fork();
 //        if (pid2 == 0) {
 //            TracePrintf(1, "Grandchild about to busy loop\n");
-//            for (;;) {
-//            }
+//
 //        } else {
 //            Delay(5);
 //    
@@ -28,11 +27,11 @@ main(int argc, char **argv)
 //    } else {
 //        TracePrintf(1, "I'm the parent process running while my child delays\n");
 //        TracePrintf(1, "I'm the parent about to delay\n");
-//        Delay(10);
+//        Delay(2);
 //        TracePrintf(1, "I'm the parent and I'm done delaying\n");
-//        for (;;) {
-//        }
+//
 //    }
+
     int pid = Fork();
     TracePrintf(1, "pid : %d about to get blocked\n", pid);
     if (pid == 0) {

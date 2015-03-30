@@ -335,6 +335,26 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
 int 
 YalnixExec(char *filename, char **argvec, ExceptionStackFrame *frame)
 {
+    char *currentCharacter = filename;
+    int vpn = DOWN_TO_PAGE(currentCharacter) / PAGESIZE;
+    struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
+    bool foundNull = false;
+    while ((vpn < NUM_VPN) && pageTable[vpn].valid == 1) {
+        while (((long)currentCharacter < (vpn + 1) * PAGESIZE) && (foundNull != true)) {
+            currentCharacter++;
+            if (currentCharacter[0] == '\0') {
+                foundNull = true;
+            }
+        }
+        if (foundNull == true) {
+            break;
+        }
+        vpn++;
+    }
+    if (!foundNull) {
+        return ERROR;
+    }
+    
     int result = LoadProgram(filename, argvec, frame, currentPCB, getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer));
     if (result < 0) {
         return ERROR;
@@ -438,6 +458,7 @@ YalnixFork(ExceptionStackFrame *frame)
     childPCB->nextProc = NULL;
     childPCB->prevProc = NULL;
     childPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
+    
     if (childPCB->childExitStatuses == NULL) {
         frame->regs[0] = ERROR;
         return;
@@ -1104,11 +1125,13 @@ KernelStart(ExceptionStackFrame *frame,
     
     idlePCB = malloc(sizeof(PCB));
     if (idlePCB == NULL) {
+        TracePrintf(0, "1\n");
         printf("ERROR: Not enough memory to start kernel\n");
         Halt();
     }
     idlePCB->pageTable = malloc(PAGE_TABLE_SIZE);
     if (idlePCB->pageTable == NULL) {
+        TracePrintf(0, "2\n");
         printf("ERROR: Not enough memory to start kernel\n");
         Halt();
     }
@@ -1118,6 +1141,7 @@ KernelStart(ExceptionStackFrame *frame,
 
     region1PageTable = malloc(PAGE_TABLE_SIZE);
     if (region1PageTable == NULL) {
+        TracePrintf(0, "3\n");
         printf("ERROR: Not enough memory to start kernel\n");
         Halt();
     }
@@ -1254,6 +1278,7 @@ KernelStart(ExceptionStackFrame *frame,
     initPCB->parent = NULL;
     initPCB->childExitStatuses = malloc(sizeof(ExitStatusQueue));
     if (initPCB->childExitStatuses == NULL) {
+        TracePrintf(0, "4\n");
         printf("ERROR: Not enough memory to start kernel\n");
         Halt();
     }
@@ -1267,6 +1292,7 @@ KernelStart(ExceptionStackFrame *frame,
     //allocate process queues
     readyQueue = malloc(sizeof(PCBQueue));
     if (readyQueue == NULL) {
+        TracePrintf(0, "5\n");
         printf("ERROR: Not enough memory to start kernel\n");
         Halt();
     }
