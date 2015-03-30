@@ -18,8 +18,7 @@ main(int argc, char **argv)
 //        int pid2 = Fork();
 //        if (pid2 == 0) {
 //            TracePrintf(1, "Grandchild about to busy loop\n");
-//            for (;;) {
-//            }
+//
 //        } else {
 //            Delay(5);
 //    
@@ -28,25 +27,21 @@ main(int argc, char **argv)
 //    } else {
 //        TracePrintf(1, "I'm the parent process running while my child delays\n");
 //        TracePrintf(1, "I'm the parent about to delay\n");
-//        Delay(10);
+//        Delay(2);
 //        TracePrintf(1, "I'm the parent and I'm done delaying\n");
-//        for (;;) {
-//        }
+//
 //    }
-    int pid = Fork();
-    TracePrintf(1, "pid : %d about to get blocked\n", pid);
-    if (pid == 0) {
-        char *buf[3];
-        
-        TtyRead(1, buf, 2);
-        buf[3] = '\0';
-        TracePrintf(1, "child got from terminal: %s\n", buf);
-    } else {
-        Delay(2);
-        char *buf2[10];
-        TtyRead(2, buf2, 9);
-        buf2[10] = '\0';
-        TracePrintf(1, "parent got from terminal: %s\n", buf2);
-    }
+//    char *buf = "abcdefgh\n\0";
+//    char *buf2 = "Hey terminal 2!\n\0";
+//    char *buf3 = "This should be in terminal 3\n\0";
+//    TtyWrite(1, buf, 200);
+//    TtyWrite(2, buf2, 200);
+//    TtyWrite(3, buf3, 200);
+//    TracePrintf(1, "done writing to terminal 1!\n");
+    char *args[2];
+    char name[36] = { 't','t','y', 'w','r','i', 't','e','3'}; 
+    
+    args[1] = NULL;
+    Exec(name, args);
     return 0;
 }
