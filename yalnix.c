@@ -335,6 +335,12 @@ yalnixContextSwitch(SavedContext *ctx, void *p1, void *p2)
 int 
 YalnixExec(char *filename, char **argvec, ExceptionStackFrame *frame)
 {
+    if (filename == NULL 
+            || ((long)filename <= MEM_INVALID_SIZE) 
+            || ((long)filename > USER_STACK_LIMIT))
+    {
+        return ERROR;
+    }
     char *currentCharacter = filename;
     int vpn = DOWN_TO_PAGE(currentCharacter) / PAGESIZE;
     struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
