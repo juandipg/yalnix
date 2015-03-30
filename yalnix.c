@@ -544,13 +544,28 @@ YalnixWait(int *status_ptr)
 {
     // return ERROR if curernt process has no child processes 
     TracePrintf(1, "Inside yalnix wait\n");
-    if (status_ptr == NULL ||
-            (currentPCB->childExitStatuses->firstExitStatus == NULL 
+    if (status_ptr == NULL 
+            || ((long)status_ptr <= MEM_INVALID_SIZE)
+            || ((long)status_ptr > USER_STACK_LIMIT)
+            || (currentPCB->childExitStatuses->firstExitStatus == NULL 
             && currentPCB->firstChild == NULL)) 
     {
         TracePrintf(1, "Inside yalnix wait going to return error\n");
         return ERROR;
     }
+    // make sure we can write to the location specified by status_ptr
+    struct pte *pageTable = getVirtualAddress(currentPCB->pageTable, currentR0PageTableVirtualPointer);
+    int vpn = DOWN_TO_PAGE(status_ptr) / PAGESIZE;
+    int prot = PROT_READ & PROT_WRITE;
+    if (pageTable[vpn].valid != 1 
+            || (pageTable[vpn].kprot & prot) != prot  
+            || (pageTable[vpn].uprot & prot) != prot)
+    {
+        TracePrintf(1, "Inside yalnix wait. Address %p of status_ptr is invalid\n"),
+                status_ptr;
+        return ERROR;
+    }
+    
     TracePrintf(1, "Checking if current process's child exit status queue is empty\n");
     // If the current process's dead child queue is empty:
     if  (currentPCB->childExitStatuses->firstExitStatus == NULL) {
@@ -1010,7 +1025,11 @@ terminalWriteHelper(int tty_id)
 bool
 checkValidBufferReadWrite(char *buf, int len, int prot)
 {
-    if (buf == NULL || len < 0 || len > TERMINAL_MAX_LINE) 
+    if (len < 0 || len > TERMINAL_MAX_LINE) 
+    {
+        return false;
+    }
+    if (buf == NULL || ((long)buf <= MEM_INVALID_SIZE) || ((long)buf > USER_STACK_LIMIT))
     {
         return false;
     }
