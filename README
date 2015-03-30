@@ -1,0 +1,91 @@
+COMP 421: lab 2
+Yalnix
+
+Margaret Kelley <mlk6@rice.edu>
+Juan Prado <jdp5@rice.edu>
+
+##########################################################################################
+
+DATA STRUCTURES
+
+Process Control Block
+All the information specific to a process, and the data needed by the
+kernel to manage and context switch in and out of processes, is contained
+in the PCB
+
+Queues
+A process can only be in a single queue at a time. For example, processes
+waiting for CPU time are in the ready queue. Processes blocked while
+waiting for the hardware (e.g. a tty) are kept in a queue of other processes
+waiting to use the same device (e.g. the same terminal). To track this, we
+use linked lists implemented in the PCB's (i.e. next and prev pointers).
+
+Terminals
+The information required to manage each terminal is stored in a terminal
+structure. An array of NUM_TERMINALS terminals is used to track the information
+of each terminal. The terminal structure includes pointers to the first and 
+last FIFO queues of processes waiting to write to the hardware, and a list
+of input lines, stored in kernel memory (i.e. kernel heap).
+
+ALGORITHMS
+
+Memory management
+
+- Storing the page table for each process
+	Since a page table occupies exactly half a page, we keep a linked list of
+	"half" pages that are used for allocating memory for page tables. Initially,
+	this list is empty. When a new process is created, if the list of "half" pages
+	is empty, a new whole physical page is allocated. One half is used immediately
+	for the new process's page table, and the other half is added to the linked
+	list of "half" pages. When a process terminates, the space used for its
+	page table is freed. If the other half of that physical page is in the list
+	of free "half" pages, the whole physical page is freed. Otherwise, the half
+	page is added to the list of free "half" pages for later use by another
+	process.
+
+- Creating a new process
+	Before creating a new process due to a Fork, the kernel verifies that there is 
+	sufficient memory (i.e. free physical pages) for the entire process (based on 
+	the number of physical pages used by the calling process). If there isn't,
+	the Fork call can return ERROR, without allocating any memory.
+
+- Storing terminal input lines
+	To efficiently stored the terminal input lines, upon receive of an interrupt
+	from the hardware, enough memory is malloc'd for a line of size TERMINAL_MAX_LINE,
+	since the kernel has no way of knowing how long the line will be. Once
+	the TtyReceive call returns, that memory location that was just malloc'd is
+	re-sized by calling realloc. This ensures that only the required memory is 
+	actually being used inside kernel heap. Upon servicing a ReadTty call from the user
+	and reading a _complete_ line, the memory is freed.
+
+Process management
+
+- Forking
+	In order to create a new process upon a call to Fork(), the existing's process's
+	valid pages are copied into new physical pages, including the kernel stack. Once
+	the cloning is done, the kernel context switches to the new process and places
+	the existing process (i.e. the parent) into the ready queue for later execution.
+
+- Exiting and shutdown
+	Using a global variable, the kernel counts the number of processes that are currently
+	running (regardless of their status, e.g. ready/blocked). Once the last process exits,
+	either normally by calling Exit() or gets terminated by the kernel, the kernel 
+	detects that 0 process are actively running, and halts the machine by calling Halt();
+
+- Wait
+	Each process has a linked list of child processes. This list is initially empty and
+	grows as processes call Fork. To return the exit code of a child to the parent, 
+	once a child returns, its exit code is added to a FIFO linked list of exit statuses 
+	in the parent. As the parent calls wait, these statuses are returned to the parent. 
+	In the case where there are running children but no exit status in the queue to 
+	return, the parent is blocked until a child exits.
+	By maintaining these lists, the kernel can service the Wait call. When a process 
+	with no children (list of children is empty) calls Wait(), the function returns 
+	ERROR. Because "orphan" processes are left without parent and are never "reaped", when
+	a process exits, the pointer to the parent PCB of all children is set to NULL. 
+	This allows the	kernel to skip storing the exit status of orphan processes.
+
+
+##########################################################################################
+
+Comp 421. Yalnix. 																	Rice U
