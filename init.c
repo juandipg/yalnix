@@ -39,10 +39,7 @@ main(int argc, char **argv)
         TracePrintf(1, "hello from child\n");
     } else {
         TracePrintf(1, "hello from parent\n");
-        for (;;) {
-            
-        }
+        Delay(10);
     }
-    TracePrintf(1, "ciao!\n");
     return 0;
 }

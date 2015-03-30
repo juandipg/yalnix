@@ -7,7 +7,7 @@
 #include "yalnix.h"
 #include <stdio.h>
 
-#define USEDPTE 0x80000000
+#define FREEPTE 0x80000000
 
 void * vector_table[TRAP_VECTOR_SIZE];
 struct pte *region1PageTable;
@@ -146,7 +146,7 @@ allocatePTMemory()
         // we just allocated
         TracePrintf(10, "Adding a free page to the half-page list\n");
         TracePrintf(1, "ADDING TOP HALF OF PFN TO LIST: %d \n", pfn);
-        topHalf->free = USEDPTE;
+        topHalf->free = FREEPTE;
         TracePrintf(1, "top half-> free = %d\n", topHalf->free);
         struct pte *potentialPTE = (struct pte *)topHalf;
         TracePrintf(1, "valid = %d, pfn = %d, kprot = %d, uprot = %d\n",
@@ -192,7 +192,7 @@ freePTMemory(void *pageTablePhysicalAddress)
                     potentialPTE->valid, potentialPTE->pfn, potentialPTE->kprot, potentialPTE->uprot);
     
     // first check to see if matching half is in the list of free half-pages
-    if (freeOtherPage->free == USEDPTE) {
+    if (freeOtherPage->free == FREEPTE) {
         TracePrintf(1, "The other page is free. About to take it out of linked free half page list\n");
         // if it is, remove it from the free half-pages list
         // TODO: Factor this out-- have addFreePageToList and removeFreePageFromList(page)
@@ -215,7 +215,7 @@ freePTMemory(void *pageTablePhysicalAddress)
         PTFreePage *freePage = (PTFreePage *)pageTable;
         TracePrintf(1, "The other half page was full, about to add this page to the list\n");
         // else, add the half-page to the list of free half-pages
-        freePage->free = USEDPTE;
+        freePage->free = FREEPTE;
         freePage->next = firstHalfPage;
         freePage->prev = NULL;
         
@@ -304,7 +304,7 @@ destroyAndContextSwitch (SavedContext *ctx, void *p1, void *p2)
     
     numProcs--;
     if (numProcs <= 0) {
-        printf("Shutting down the kernel\n");
+        printf("All processes completed. Shutting down the kernel.\n");
         Halt();
     }
     WriteRegister(REG_PTR0, (RCS421RegVal)pcb2->pageTable);
